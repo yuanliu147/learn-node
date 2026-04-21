@@ -2,7 +2,90 @@
 
 ## Concept
 
-LLM APIs have strict rate limits on requests-per-minute (RPM), tokens-per-minute (TPM), and concurrent connections. Concurrency control manages these limits to maximize throughput while avoiding 429 errors and account suspension.
+LLM APIs impose rate limits—RPM (requests-per-minute), TPM (tokens-per-minute), and concurrent connections—that constrain throughput. Concurrency control manages these limits to maximize utilization while avoiding 429 errors and account suspension.
+
+**Architecture Perspective**: Concurrency control is not merely a client-side concern. It spans client libraries, API gateways, and proxy layers. The right implementation depends on where you sit in the stack, your multi-tenant requirements, and whether you prioritize latency, throughput, or cost.
+
+---
+
+## Rate Limit Architecture
+
+### Where to Implement
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    CONCURRENCY CONTROL ARCHITECTURE                  │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │
+│  │   CLIENT    │    │   GATEWAY   │    │   PROXY     │            │
+│  │   EMBEDDED  │───▶│   LAYER     │───▶│   LAYER     │            │
+│  └─────────────┘    └─────────────┘    └─────────────┘            │
+│         │                  │                  │                    │
+│         ▼                  ▼                  ▼                    │
+│  Simple, fast         Centralized        Advanced                  │
+│  No shared state      per-provider       per-tenant                │
+│  Best: single         Best: multi-app    Best: enterprise          │
+│  service              services           scale                     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+| Location | Pros | Cons | Best For |
+|----------|------|------|----------|
+| Client library | Zero network hop, simple | No cross-client coordination | Single service, low traffic |
+| API gateway | Centralized, observable | Single point of throttling | Multi-app, shared LLM budget |
+| Proxy layer | Per-tenant limits, rich metrics | Additional infrastructure | Enterprise, multi-tenant SaaS |
+
+### Multi-Tenant Considerations
+
+In multi-tenant systems, you need **per-tenant** rate limiting alongside **global** provider limits:
+
+```typescript
+interface TenantRateLimitConfig {
+  tenantId: string;
+  rpmLimit: number;      // Tenant's allocation
+  tpmLimit: number;      // Tenant's allocation
+  burstAllowance: number; // Temporary overflow
+}
+
+class MultiTenantLimiter {
+  private globalLimiter: AdaptiveRateLimiter;
+  private tenantLimiters: Map<string, TokenBucket>;
+  
+  constructor(
+    private globalConfig: GlobalRateLimitConfig,
+    private tenantConfigs: Map<string, TenantRateLimitConfig>
+  ) {
+    this.globalLimiter = new AdaptiveRateLimiter(
+      globalConfig.rpmLimit,
+      globalConfig.tpmLimit,
+      globalConfig.maxConcurrent
+    );
+  }
+  
+  async executeForTenant<T>(
+    tenantId: string,
+    prompt: string,
+    estimatedTokens: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const tenantConfig = this.tenantConfigs.get(tenantId);
+    if (!tenantConfig) throw new Error(`Unknown tenant: ${tenantId}`);
+    
+    // Tenant-level limit (usually stricter than global)
+    const tenantLimiter = this.getOrCreateTenantLimiter(tenantId, tenantConfig);
+    await tenantLimiter.acquire();
+    
+    // Global limit (provider API constraints)
+    return this.globalLimiter.execute(prompt, estimatedTokens, fn);
+  }
+}
+```
+
+**Trade-off**: Per-tenant limits add latency (extra synchronization) but prevent noisy neighbor problems.
+
+---
 
 ## Rate Limit Types
 
@@ -18,10 +101,10 @@ LLM APIs have strict rate limits on requests-per-minute (RPM), tokens-per-minute
 │                                                         │
 │  TPM (Tokens Per Minute)                                │
 │  ├── Limits token throughput                            │
-│  ├── Usually 60K-1M depending on model/tier              │
-│  └── Enforced via token counting in request body        │
+│  ├── Usually 60K-1M depending on model/tier            │
+│  └── Enforced via token counting in request body       │
 │                                                         │
-│  Concurrent Connections                                 │
+│  Concurrent Connections                                  │
 │  ├── Max simultaneous requests                          │
 │  ├── Usually 5-50                                       │
 │  └── Exceeding causes immediate 429                      │
@@ -29,7 +112,15 @@ LLM APIs have strict rate limits on requests-per-minute (RPM), tokens-per-minute
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Token Bucket Algorithm
+**Architecture Note**: TPM limits are harder to enforce because token count varies per request. Estimate conservatively and monitor actual consumption via response headers.
+
+---
+
+## Core Algorithms
+
+### Token Bucket Algorithm
+
+Smooth rate limiting that allows burst traffic within capacity.
 
 ```typescript
 class TokenBucket {
@@ -89,7 +180,11 @@ async function callWithRateLimit(fn: () => Promise<any>) {
 }
 ```
 
-## Semaphore for Concurrent Limits
+**When to use**: Token bucket is ideal for smooth rate limiting with burst allowance. It's computationally cheap and easy to reason about.
+
+### Semaphore for Concurrent Limits
+
+Limits simultaneous operations—critical for connection pool management.
 
 ```typescript
 class Semaphore {
@@ -145,7 +240,11 @@ async function callLLM(prompt: string): Promise<string> {
 }
 ```
 
-## Priority Queue
+**When to use**: Semaphores are essential when the upstream has hard concurrent connection limits. They prevent resource exhaustion at the cost of request queuing.
+
+### Priority Queue
+
+Fair ordering with importance levels—essential for production systems with mixed workloads.
 
 ```typescript
 interface QueuedRequest {
@@ -211,7 +310,15 @@ class PriorityRequestQueue {
 }
 ```
 
-## Retry with Exponential Backoff
+**When to use**: Priority queues are critical when you have heterogeneous workloads (e.g., interactive user requests vs. batch processing). They ensure high-priority requests aren't blocked by bulk operations.
+
+---
+
+## Advanced Patterns
+
+### Retry with Exponential Backoff
+
+**Architecture Note**: Retry logic belongs at the call site, not scattered throughout your codebase. Centralize it in a retry handler that applies consistent policies.
 
 ```typescript
 interface RetryConfig {
@@ -274,7 +381,68 @@ class RetryHandler {
 }
 ```
 
-## Adaptive Rate Limiter
+**Trade-off**: Retries increase tail latency and can exacerbate rate limit pressure during outages. Use with a circuit breaker.
+
+### Circuit Breaker Pattern
+
+Prevent cascading failures when LLM providers are degraded.
+
+```typescript
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailure: number | null = null;
+  private state: 'closed' | 'open' | 'half-open' = 'closed';
+  
+  constructor(
+    private failureThreshold: number = 5,
+    private recoveryTimeout: number = 30000, // 30s
+    private halfOpenRequests: number = 3
+  ) {}
+  
+  async execute<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === 'open') {
+      if (Date.now() - this.lastFailure! > this.recoveryTimeout) {
+        this.state = 'half-open';
+      } else {
+        throw new Error('Circuit breaker is OPEN');
+      }
+    }
+    
+    try {
+      const result = await fn();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+  
+  private onSuccess() {
+    this.failures = 0;
+    this.state = 'closed';
+  }
+  
+  private onFailure() {
+    this.failures++;
+    this.lastFailure = Date.now();
+    
+    if (this.failures >= this.failureThreshold) {
+      this.state = 'open';
+    }
+  }
+  
+  getState() {
+    return this.state;
+  }
+}
+```
+
+**Architecture Note**: Circuit breakers work well with adaptive rate limiters. When the breaker opens, the adaptive limiter will reduce throughput, naturally decreasing load on the failing service.
+
+### Adaptive Rate Limiter
+
+Self-tuning based on observed error rates—ideal for production systems.
 
 ```typescript
 class AdaptiveRateLimiter {
@@ -347,11 +515,66 @@ class AdaptiveRateLimiter {
 }
 ```
 
+**Trade-off**: Adaptive limiting requires tuning thresholds for your traffic patterns. Aggressive adaptation can cause oscillation; conservative adaptation may not respond fast enough to outages.
+
+---
+
+## Observability
+
+### Metrics to Track
+
+```typescript
+interface RateLimitMetrics {
+  // Throughput
+  requestsPerMinute: number;
+  tokensPerMinute: number;
+  
+  // Health
+  errorRate: number;
+  circuitBreakerState: string;
+  
+  // Queue
+  queueDepth: number;
+  averageWaitTime: number;
+  
+  // Limits
+  utilizedCapacity: number;  // 0-1
+  throttledRequests: number;
+}
+
+class RateLimitObserver {
+  private metrics: RateLimitMetrics;
+  
+  recordRequest(tokens: number, latency: number, success: boolean) {
+    // Update Prometheus metrics or similar
+  }
+  
+  getMetrics(): RateLimitMetrics {
+    return this.metrics;
+  }
+}
+```
+
+**Key metrics for alerting**:
+- Error rate > 5% sustained for 2 minutes
+- Queue depth > 100 for > 5 minutes
+- Circuit breaker open
+
+---
+
 ## Summary
 
-Concurrency control prevents rate limit errors while maximizing throughput:
-1. **Token Bucket**: Smooth rate limiting for RPM/TPM
-2. **Semaphore**: Limits concurrent connections
-3. **Priority Queue**: Fair ordering with importance levels
-4. **Retry Handler**: Automatic retry with exponential backoff
-5. **Adaptive Limiter**: Self-tuning based on error rates
+| Pattern | When to Use | Key Trade-off |
+|---------|-------------|---------------|
+| Token Bucket | Smooth rate limiting with bursts | Requires token estimation |
+| Semaphore | Hard concurrent limits | Queues requests, adds latency |
+| Priority Queue | Mixed workload priorities | More complex ordering logic |
+| Retry + Backoff | Transient failures | Increases tail latency |
+| Circuit Breaker | Prevent cascading failures | May reject valid requests |
+| Adaptive Limiter | Production traffic | Requires tuning |
+
+**Architecture Decision Guide**:
+1. Single service, low traffic → Token bucket + semaphore
+2. Multi-app shared budget → Add API gateway layer
+3. Enterprise multi-tenant → Proxy layer with per-tenant limits
+4. Mission-critical → Add circuit breaker + adaptive limiter + full observability

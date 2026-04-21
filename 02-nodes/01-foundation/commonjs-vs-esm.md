@@ -1,61 +1,273 @@
 ---
-title: "CommonJS vs ES Modules (ESM) in Node.js"
-description: "Comprehensive comparison of CJS and ESM module systems, including syntax, loading behavior, caching, and interoperability"
-tags:
-  - nodejs
-  - modules
-  - commonjs
-  - esm
-  - import
-  - export
-  - module-system
-related:
-  - event-loop-phases
-  - microtask-macrotask
+id: commonjs-vs-esm
+title: CommonJS vs ES Modules (ESM) 技术选型
+difficulty: L2
+tags: ["nodejs", "modules", "commonjs", "esm", "import", "export", "module-system"]
+prerequisites: ["event-loop-phases"]
+related: ["microtask-macrotask", "module-loading"]
+interview_hot: true
+ai_confidence: 5
+version: 2.0
+last_updated: 2026-04-21
+human_verified: false
+todo:
+  - 添加 ESM import assertion vs import attributes 对比
+  - 补充 CJS 和 ESM 混用的边界情况
 ---
 
-# CommonJS vs ES Modules (ESM) in Node.js
+# CommonJS vs ES Modules (ESM) 技术选型
 
-Node.js supports two module systems: **CommonJS (CJS)**, the legacy system using `require()` and `module.exports`, and **ECMAScript Modules (ESM)**, the standard JavaScript module system using `import` and `export`. Understanding both—and how they interoperate—is essential for modern Node.js development.
+## 一句话定义
 
-## At a Glance
+> CommonJS (CJS) 是 Node.js 传统的同步模块系统，而 ES Modules (ESM) 是 ES2015+ 标准的静态异步模块系统。两者在语法、加载时机、缓存行为上存在本质差异，选择时需要考虑项目规模、生态兼容性和性能需求。
 
-| Aspect | CommonJS (CJS) | ES Modules (ESM) |
-|--------|---------------|------------------|
-| Syntax | `require()`, `module.exports` | `import`, `export` |
-| Loading | Synchronous | Asynchronous (parses first, loads asynchronously) |
-| When it runs | Runtime | Parse time (static structure required) |
-| Circular deps | Supported, with caveats | Supported, with caveats |
-| Node.js support | Native, default | Native since v12+, requires `.mjs` or `"type":"module"` |
-| Browser support | Via bundlers | Native in modern browsers |
+---
 
-## CommonJS (CJS)
+## 解决什么问题
 
-CommonJS was the default module system in Node.js for over a decade. It uses synchronous `require()` calls and `module.exports` for exports.
+### 模块系统的核心问题：代码复用与依赖管理
 
-### Basic Syntax
+```
+没有模块系统的问题：
+┌─────────────────────────────────────────────────────┐
+│  全局变量污染          依赖关系混乱                 │
+│  ┌─────────────┐      ┌─────────────┐            │
+│  │  var a = 1  │      │  文件1用a    │            │
+│  │  var a = 2  │  →   │  文件2改a    │  → 难以维护 │
+│  │  console.log│      │  文件3不知用哪个a           │
+│  └─────────────┘      └─────────────┘            │
+└─────────────────────────────────────────────────────┘
+
+模块系统解决的问题：
+┌─────────────────────────────────────────────────────┐
+│  模块作用域隔离        显式依赖声明                 │
+│  ┌─────────────┐      ┌─────────────┐            │
+│  │ module a    │      │ require('./b')│           │
+│  │  export = 1 │  →   │  清晰的依赖  │  → 可维护   │
+│  │  export = 2 │      │  树          │            │
+│  └─────────────┘      └─────────────┘            │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 架构设计
+
+### 核心机制对比
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         模块加载架构对比                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   CommonJS (CJS)                     ES Modules (ESM)                    │
+│   ===============                    ===============                    │
+│                                                                          │
+│   require() ──→ 同步读取              import ──→ 静态分析                │
+│       │                                │                                │
+│       ▼                                ▼                                │
+│   ┌────────┐                      ┌────────────┐                        │
+│   │ 运行时  │                      │  解析时    │                        │
+│   │ 执行    │                      │ 构建依赖图  │                        │
+│   └────────┘                      └────────────┘                        │
+│       │                                │                                │
+│       ▼                                ▼                                │
+│   module.exports                 export {} 声明                         │
+│   (对象拷贝)                      (实时绑定)                            │
+│                                                                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│  关键差异:                                                               │
+│  • CJS: 动态、运行时、同步、值拷贝                                       │
+│  • ESM: 静态、解析时、异步(加载)、引用绑定                               │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 加载流程对比
+
+```
+CJS 加载流程:
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│ require()│────▶│  解析    │────▶│  加载    │────▶│  执行    │
+│  调用    │     │ (运行时) │     │ (同步)   │     │ (同步)   │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘
+                                              │
+                                              ▼
+                                        ┌──────────┐
+                                        │  缓存    │
+                                        │ (exports)│
+                                        └──────────┘
+
+ESM 加载流程:
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│  import  │────▶│  解析    │────▶│  构建    │────▶│  实例化  │
+│  声明    │     │ (静态)   │     │ 依赖图   │     │ (异步)   │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘
+                                              │
+                    ┌─────────────────────────┼─────────────────────────┐
+                    ▼                         ▼                         ▼
+              ┌──────────┐              ┌──────────┐              ┌──────────┐
+              │ Module A │              │ Module B │              │ Module C │
+              │ (已实例化)│              │ (实例化中)│              │ (等待中)  │
+              └──────────┘              └──────────┘              └──────────┘
+```
+
+---
+
+## 技术选型视角
+
+### 选择 CJS 的场景
+
+| 场景 | 原因 | 示例 |
+|------|------|------|
+| **Node.js 工具脚本** | 简单、无需构建工具 | CLI 工具、构建脚本 |
+| **内部项目快速原型** | 无需配置，开箱即用 | 快速验证想法 |
+| **大量使用动态 require** | ESM 不支持 `require()` | 插件系统、条件加载 |
+| **需要同步加载** | ESM 本质是异步 | 同步初始化的库 |
+| **遗留代码维护** | 避免大规模重构 | 长期维护的项目 |
+
+### 选择 ESM 的场景
+
+| 场景 | 原因 | 示例 |
+|------|------|------|
+| **前端框架开发** | 更好的 tree-shaking | React、Vue 组件库 |
+| **需要静态分析** | 导入可被分析 | bundler、linter |
+| **现代 Node.js 项目** | v20+ 默认支持 | 新项目、活跃维护项目 |
+| **需要顶级 await** | 只有 ESM 支持 | 初始化逻辑复杂的模块 |
+| **跨环境代码** | 浏览器原生支持 | 同构代码库 |
+| **发布 npm 包** | 趋势是 ESM-first | 现代库 |
+
+### 决策矩阵
+
+```
+                    CJS                              ESM
+                   ┌───────┐                       ┌───────┐
+    同步加载       │  ✅   │                       │  ❌   │
+                   └───────┘                       └───────┘
+                   ┌───────┐                       ┌───────┐
+    动态 require   │  ✅   │                       │  ❌   │
+                   └───────┘                       └───────┘
+                   ┌───────┐                       ┌───────┐
+    Tree-shaking   │  ❌   │                       │  ✅   │
+                   └───────┘                       └───────┘
+                   ┌───────┐                       ┌───────┐
+    静态分析       │  ❌   │                       │  ✅   │
+                   └───────┘                       └───────┘
+                   ┌───────┐                       ┌───────┐
+    浏览器原生     │  ❌   │                       │  ✅   │
+                   └───────┘                       └───────┘
+                   ┌───────┐                       ┌───────┐
+    顶级 await     │  ❌   │                       │  ✅   │
+                   └───────┘                       └───────┘
+```
+
+### 迁移策略：CJS → ESM
+
+```
+迁移路径选择:
+
+1. 增量迁移 (推荐)
+   ┌─────────────────────────────────────────────────────┐
+   │  .mjs 文件直接使用 ESM                              │
+   │  .js 文件保持 CJS                                   │
+   │  通过动态 import() 混用                             │
+   └─────────────────────────────────────────────────────┘
+
+2. 全面迁移
+   ┌─────────────────────────────────────────────────────┐
+   │  package.json: { "type": "module" }                 │
+   │  所有 .js → .mjs 或重构 import/export               │
+   │  风险较高，需要全面测试                              │
+   └─────────────────────────────────────────────────────┘
+
+3. 双模式发布 (库)
+   ┌─────────────────────────────────────────────────────┐
+   │  package.json:                                      │
+   │  {                                                  │
+   │    "type": "module",                                │
+   │    "exports": {                                     │
+   │      "import": "./dist/esm/index.js",               │
+   │      "require": "./dist/cjs/index.cjs"              │
+   │    }                                                │
+   │  }                                                  │
+   └─────────────────────────────────────────────────────┘
+```
+
+### 混用注意事项
+
+```javascript
+// ❌ 错误: 在 ESM 中使用 require
+// my-module.mjs
+const cjs = require('./cjs-module');  // SyntaxError!
+
+// ✅ 正确: 动态 import()
+const cjs = await import('./cjs-module.cjs');
+
+// ❌ 错误: 在 CJS 中使用静态 import
+// my-module.cjs
+import { foo } from './esm-module';  // SyntaxError!
+
+// ✅ 正确: 动态 import()
+import('./esm-module.mjs').then(module => {
+  console.log(module.foo);
+});
+```
+
+### 循环依赖处理对比
+
+```javascript
+// CJS: 返回部分初始化的 module.exports
+// a.js
+console.log('a starting');
+const b = require('./b');
+console.log('a: b.loaded =', b.loaded);
+module.exports = { loaded: true };
+
+// b.js
+console.log('b starting');
+const a = require('./a');
+console.log('b: a.loaded =', a.loaded);  // undefined!
+module.exports = { loaded: true };
+
+// 输出:
+// a starting
+// b starting
+// b: a.loaded = undefined  ← a 尚未完成初始化
+// a: b.loaded = true
+
+// ESM: 通过 binding 延迟求值
+// a.mjs
+console.log('a starting');
+import { b } from './b.mjs';
+console.log('a: b =', b);
+export const a = 'module a';
+
+export function getB() { return b; }
+
+// b.mjs
+console.log('b starting');
+import { a } from './a.mjs';
+console.log('b: a =', a);  // 'module a' — binding 已建立
+export const b = 'module b';
+```
+
+---
+
+## 实战对比
+
+### CJS 示例
 
 ```javascript
 // math.js
-function add(a, b) {
-  return a + b;
-}
+const add = (a, b) => a + b;
+const multiply = (a, b) => a * b;
 
-function multiply(a, b) {
-  return a * b;
-}
+// 导出方式1: 直接赋值
+module.exports = { add, multiply };
 
-module.exports = {
-  add,
-  multiply,
-};
-
-// OR individual exports:
+// 导出方式2: 逐个赋值
 // module.exports.add = add;
 // module.exports.multiply = multiply;
-```
 
-```javascript
 // main.js
 const { add, multiply } = require('./math');
 
@@ -63,430 +275,158 @@ console.log(add(2, 3));       // 5
 console.log(multiply(4, 5));  // 20
 ```
 
-### Named Exports in CJS
-
-```javascript
-// utils.js
-exports.foo = 'bar';
-exports.count = 42;
-
-// Equivalent to:
-module.exports = { foo: 'bar', count: 42 };
-```
-
-### require() and Module Resolution
-
-```javascript
-// Require a built-in module
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-
-// Require a local module
-const myModule = require('./myModule');
-
-// Require a package (looks in node_modules)
-const express = require('express');
-```
-
-### CJS Loading Behavior
-
-1. **Synchronous**: `require()` executes synchronously and returns the module's exports
-2. **Cached**: Modules are cached after first load; subsequent `require()` calls return the cached instance
-3. **Circular dependencies**: Supported, but accessing exports before they're fully initialized returns `{}` (empty object)
-
-```javascript
-// Circular dependency example
-// a.js
-console.log('a starting');
-exports.loaded = false;
-const b = require('./b');
-exports.loaded = true;
-console.log('a loaded, b.loaded =', b.loaded);
-
-// b.js
-console.log('b starting');
-const a = require('./a');
-console.log('b starting, a.loaded =', a.loaded);
-module.exports = { loaded: true };
-
-// Running node a.js:
-// a starting
-// b starting
-// b starting, a.loaded = false   ← a is partially loaded
-// a loaded, b.loaded = true
-```
-
-## ES Modules (ESM)
-
-ESM is the ECMAScript standard for modules, adopted in ES2015. Node.js added experimental support in v8, stable support in v12, and made it non-experimental in v14.
-
-### Enabling ESM in Node.js
-
-**Option 1**: Use `.mjs` extension
-```bash
-# File: math.mjs
-```
-
-**Option 2**: Use `.js` extension with `package.json`:
-```json
-{
-  "type": "module"
-}
-```
-
-**Option 3**: Use `package.json` with explicit `"type": "module"` at project root.
-
-### Basic Syntax
+### ESM 示例
 
 ```javascript
 // math.mjs
-export function add(a, b) {
-  return a + b;
-}
-
+export const add = (a, b) => a + b;
 export const multiply = (a, b) => a * b;
 
-// Default export
-export default function divide(a, b) {
-  return a / b;
-}
-```
+// 默认导出
+export default class Calculator { }
 
-```javascript
 // main.mjs
-import add, { multiply } from './math.mjs';
-// Or: import { add, multiply } from './math.mjs';
+import Calc, { add, multiply } from './math.mjs';
 
 console.log(add(2, 3));       // 5
 console.log(multiply(4, 5));  // 20
 ```
 
-### ESM Syntax Rules
-
-1. **`import` and `export` must be at the top level** — they are static and cannot be inside conditionals or functions (this is a parse-time requirement, not runtime)
-2. **Cannot use `require()`** in ESM files
-3. **Cannot use `__dirname` or `__filename`** directly (use `import.meta.dirname` and `import.meta.filename`)
+### 互操作示例
 
 ```javascript
-// INVALID in ESM - cannot use import conditionally:
-if (someCondition) {
-  import('./module.js');  // SyntaxError! Use dynamic import() instead
-}
+// my-cjs.cjs (CommonJS)
+module.exports = {
+  value: 42,
+  getValue() { return this.value; }
+};
 
-// VALID: Dynamic import()
-const module = await import('./module.js');
+// esm-consumer.mjs (ESM 导入 CJS)
+import cjsModule from './my-cjs.cjs';
+console.log(cjsModule.value);  // 42 — 通过 default 属性访问
+
+// my-esm.mjs (ESM)
+export const answer = 42;
+export default function getAnswer() { return answer; }
+
+// cjs-consumer.cjs (CJS 导入 ESM)
+import('./my-esm.mjs').then(esm => {
+  console.log(esm.answer);      // 42
+  console.log(esm.default());   // 42 — 默认导出是函数
+});
 ```
 
-### Named vs Default Exports
+---
+
+## 最佳实践
+
+### 1. 项目级决策
 
 ```javascript
-// lib.js
-export const version = '1.0.0';
-export function greet(name) {
-  return `Hello, ${name}`;
-}
-
-// Default export
-export default class API {
-  // ...
-}
-```
-
-```javascript
-// main.js
-// Named imports
-import { version, greet } from './lib.js';
-
-// Default import
-import API from './lib.js';
-
-// Combine
-import API, { version, greet } from './lib.js';
-
-// Namespace import
-import * as lib from './lib.js';
-console.log(lib.version);  // '1.0.0'
-```
-
-### import.meta
-
-ESM provides metadata about the current module via `import.meta`:
-
-```javascript
-import.meta.url       // File URL of the current module
-import.meta.dirname   // Directory name (Node.js 20.11+)
-import.meta.filename  // File name (Node.js 20.11+)
-import.meta.resolve('lodash')  // Resolved path to a module
-```
-
-### Dynamic import()
-
-ESM supports dynamic imports for conditional or lazy loading:
-
-```javascript
-// main.js
-async function loadFeature() {
-  if (needsFeature) {
-    const { feature } = await import('./feature.js');
-    feature();
+// 新项目推荐: package.json 配置
+{
+  "name": "my-project",
+  "type": "module",  // 启用 ESM
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs",
+      "types": "./dist/types/index.d.ts"
+    }
   }
 }
 ```
 
-`import()` returns a Promise and is not bound to the static `import` statement rules.
+### 2. 混用策略
 
-## Key Differences in Behavior
-
-### 1. Module Resolution
-
-**CJS** resolves modules at runtime:
 ```javascript
-// Resolves at require() call time
-const mod = require('./' + 'module');
+// 使用 .cjs 强制 CJS
+// force-cjs.cjs — 即使在 type: module 项目中也是 CJS
+const cjs = require('./some-cjs-module');
+
+// 使用 .mjs 强制 ESM
+// force-esm.mjs — 即使在 type: commonjs 项目中也是 ESM
+import { something } from './something.mjs';
 ```
 
-**ESM** resolves all imports before code executes (static analysis):
-```javascript
-// This is valid ESM:
-import('./module.js').then(...);
-
-// But this is NOT valid ESM:
-import(path + '/module.js');  // SyntaxError: import requires a string literal
-```
-
-### 2. this at Module Scope
-
-- **CJS**: `this` at module scope is `module.exports` (equivalent to `module`)
-- **ESM**: `this` at module scope is `undefined` (proper module scoping)
+### 3. 路径处理差异
 
 ```javascript
 // CJS
-console.log(this);  // {}
+console.log(__dirname);  // 直接可用
+console.log(__filename);
 
-// ESM
-console.log(this);  // undefined
-```
-
-### 3. Caching Behavior
-
-Both module systems cache modules, but with slightly different semantics.
-
-**CJS**: Cache stores the `module.exports` object. Mutating this object affects all consumers.
-
-```javascript
-// counter.js
-let count = 0;
-module.exports = { count, increment: () => count++ };
-
-// a.js
-const c1 = require('./counter');
-c1.increment();
-c1.increment();
-
-// b.js - same cache, sees updated count
-const c2 = require('./counter');
-console.log(c2.count);  // 2
-```
-
-**ESM**: Exports are live bindings. Reassigning an exported binding propagates.
-
-```javascript
-// counter.mjs
-let count = 0;
-export { count };
-export function increment() { count++; }
-
-// a.mjs
-import { count, increment } from './counter.mjs';
-increment();
-increment();
-
-// b.mjs
-import { count } from './counter.mjs';
-console.log(count);  // 2
-```
-
-### 4. Circular Dependencies
-
-Both systems support circular dependencies, but the mechanisms differ.
-
-**CJS** gives you a partially initialized module object:
-```javascript
-// a.js
-const b = require('./b');
-module.exports = { b, name: 'a' };  // b might be partially loaded
-```
-
-**ESM** gives you live bindings that resolve when accessed:
-```javascript
-// a.mjs
-import { b } from './b.mjs';
-export const name = 'a';
-export function getB() { return b; }  // getter-based access
-
-// b.mjs
-import { name } from './a.mjs';  // name is 'a' even if module not fully initialized
-export const b = 'module b';
-```
-
-### 5. Synchronous vs Asynchronous Loading
-
-- **CJS**: Synchronous `require()` — blocks until the module is fully loaded and executed
-- **ESM**: The `import` declaration is synchronous (static), but the loading process is asynchronous and the module graph is validated before any code runs
-
-```javascript
-// CJS - synchronous, blocks
-const foo = require('./foo');
-console.log(foo);  // Module already executed
-
-// ESM - static imports resolve before any module code runs
-import foo from './foo.mjs';
-console.log(foo);  // Module already executed
-```
-
-## Interoperability: Using CJS from ESM and Vice Versa
-
-Node.js supports mixing both module systems with some rules:
-
-### Importing CJS from ESM
-
-```javascript
-// my-cjs-module.js (or .cjs)
-module.exports = { value: 42 };
-```
-
-```javascript
-// my-esm.mjs
-import cjsModule from './my-cjs-module.cjs';
-// Or with namespace:
-import * as cjsModule from './my-cjs-module.cjs';
-
-console.log(cjsModule.default.value);  // 42
-```
-
-**Key rule**: CJS modules have **only a default export** from ESM's perspective. You access `module.exports` as `module.default`.
-
-```javascript
-// my-cjs.js
-module.exports = { foo: 'bar' };
-
-// ESM import
-import cjs from './my-cjs.js';
-console.log(cjs.foo);  // 'bar' — accessed via default property
-```
-
-### Importing ESM from CJS
-
-```javascript
-// my-esm.mjs
-export const answer = 42;
-export default function getAnswer() { return answer; }
-```
-
-```javascript
-// my-cjs.cjs
-// NOT DIRECTLY POSSIBLE — ESM cannot be required synchronously
-
-// Workaround: use dynamic import()
-import('./my-esm.mjs').then(esm => {
-  console.log(esm.answer);         // 42
-  console.log(esm.default());      // 42
-});
-```
-
-**Key rule**: You **cannot** use static `import` from CJS. You must use dynamic `import()` which returns a Promise.
-
-### Dual Package Hazard
-
-When a package ships **both** CJS and ESM versions, Node.js uses the `exports` field in `package.json` to determine which to load:
-
-```json
-{
-  "name": "my-package",
-  "exports": {
-    "import": "./dist/esm/index.js",
-    "require": "./dist/cjs/index.js"
-  },
-  "main": "./dist/cjs/index.js"
-}
-```
-
-When the same module is loaded via both systems, you get **two separate module instances**, which can cause bugs:
-
-```javascript
-// main.mjs
-import pkg from 'dual-pkg';
-console.log(pkg.versions());  // {}
-
-/ node.cjs
-const pkg = require('dual-pkg');
-pkg.increment();
-console.log(pkg.versions());  // { count: 1 } ← DIFFERENT instance!
-```
-
-Solution: Use `"module"` package type and ensure the package properly exports ESM for both entry points, or use packages that provide only one module system.
-
-## __dirname, __filename, and import.meta
-
-```javascript
-// CJS
-console.log(__dirname);  // /path/to/project/src
-console.log(__filename); // /path/to/project/src/main.js
-
-// ESM - use import.meta
+// ESM — 需要额外处理
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Node.js 20.11+ 可直接使用
+// import.meta.dirname
+// import.meta.filename
 ```
 
-Node.js 20.11+ provides `import.meta.dirname` and `import.meta.filename` directly.
+### 4. this 语义差异
 
-## Package.json type Field
-
-```json
-{
-  "type": "module"
-}
-```
-
-- With `"type": "module"`: All `.js` files are treated as ESM
-- Without it (or `"type": "commonjs"`): All `.js` files are treated as CJS
-
-Use `.cjs` extension to force CJS even in a `"type": "module"` package:
 ```javascript
-// force-cjs.cjs — always CommonJS regardless of package.json
-const cjs = require('./something');
+// CJS — this 是 module.exports
+console.log(this);  // {} — 在模块顶层
+
+// ESM — this 是 undefined (正确模块语义)
+console.log(this);  // undefined
 ```
 
-Use `.mjs` extension to force ESM even in a `"type": "commonjs"` package:
+---
+
+## 常见问题
+
+### Q: setTimeout(fn, 0) 和 setImmediate 哪个先执行？
+
 ```javascript
-// force-esm.mjs — always ESM regardless of package.json
-import { something } from './something.mjs';
+// I/O 回调内: setImmediate 先于 setTimeout
+fs.readFile('file.txt', () => {
+  setTimeout(() => console.log('timeout'), 0);
+  setImmediate(() => console.log('immediate'));
+  // 输出: immediate, timeout
+});
+
+// 主体代码: 顺序不确定
+setTimeout(() => console.log('timeout'), 0);
+setImmediate(() => console.log('immediate'));
+// 输出顺序依赖系统负载，通常 timeout 先执行
 ```
 
-## Best Practices
+### Q: 为什么 ESM 不能使用 require()？
 
-1. **Pick one system per project** — mixing creates cognitive overhead and potential bugs
-2. **Prefer ESM for new packages** — it's the standard, better tree-shaking, used by bundlers
-3. **Use CJS for Node.js-only utilities** that don't need bundler features
-4. **Use `exports` field in package.json** instead of `main` for proper dual-package support
-5. **Avoid circular dependencies** — they're supported but make code harder to reason about
-6. **Don't mix require and import** in the same file — it's invalid syntax
+ESM 的 `import` 是静态声明，在解析阶段就确定依赖图。而 `require()` 是动态表达式，运行时才知道要加载什么。这使得 ESM 能够实现：
+- 静态分析（IDE 支持、tree-shaking）
+- 循环依赖更好地处理
+- 顶级 await
 
-## Summary
+---
 
-- **CommonJS** (`require`/`module.exports`) is synchronous, runtime-resolved, and the historical Node.js default
-- **ES Modules** (`import`/`export`) is asynchronous-aware, statically parsed, and the ECMAScript standard
-- ESM enables better tooling (tree-shaking, static analysis), while CJS remains simpler for direct Node.js use
-- Interoperability exists but has quirks: ESM sees CJS as having only a default export; CJS cannot directly import ESM without dynamic `import()`
-- The ecosystem is still transitioning—many npm packages ship both formats via the `exports` field
+## 总结
 
-## References
+| 维度 | CommonJS | ES Modules |
+|------|----------|------------|
+| **语法** | `require()`, `module.exports` | `import`, `export` |
+| **加载时机** | 运行时同步 | 解析时异步 |
+| **缓存机制** | 对象拷贝 | 实时绑定 |
+| **循环依赖** | 部分初始化对象 | 延迟求值 binding |
+| **Tree-shaking** | 不支持 | 支持 |
+| **浏览器支持** | 需要打包 | 原生支持 |
+| **Node.js 默认** | 是 (v12 前) | v12+ 可选，v20+ 推荐 |
+| **动态性** | `require()` 可在条件中 | 只支持 `import()` 动态加载 |
 
-- [Node.js Modules documentation](https://nodejs.org/api/modules.html)
-- [Node.js ESM documentation](https://nodejs.org/api/esm.html)
-- [ESM in Node.js: A (not so) complete guide](https://nodejs.org/api/modules.html#modules-ecmascript-modules)
-- [package.json exports field](https://nodejs.org/api/packages.html#packages_exports)
+**选型建议**: 新项目使用 ESM，享受现代生态红利；维护遗留项目时保持 CJS 或逐步迁移；发布库时考虑双模式支持。
+
+---
+
+## 相关资源
+
+- [Node.js Modules 文档](https://nodejs.org/api/modules.html)
+- [Node.js ESM 文档](https://nodejs.org/api/esm.html)
+- [package.json exports 字段](https://nodejs.org/api/packages.html#packages_exports)
+- [ESM 迁移指南](https://nodejs.org/api/modules.html#modules-ecmascript-modules)

@@ -1,412 +1,472 @@
-# Promise Internals
+---
+id: promise-internals
+title: Promise 内部原理
+difficulty: L4
+tags: ["promise", "async", "microtask", "state-machine"]
+prerequisites: ["microtask-macrotask"]
+related: ["async-await-transform", "concurrency-patterns"]
+interview_hot: true
+ai_confidence: 4
+version: 2.0
+last_updated: 2026-04-21
+human_verified: false
+todo:
+  - 添加 Promise.any 和 Promise.allSettled 的实现
+  - 补充与浏览器 Promise 的差异
+---
 
-## Overview
+# Promise 内部原理
 
-A Promise is an object representing the eventual completion or failure of an asynchronous operation. It serves as a placeholder for a value that is not yet available but will be at some point in the future.
+## 一句话定义
 
-## Promise States
+> Promise 是 **状态机** + **回调容器**，封装了异步操作的最终结果（值或错误），并通过 `.then()` / `.catch()` 链式调用提供统一的异步编程接口。
 
-A Promise is always in one of three states:
+---
 
-| State | Description |
-|-------|-------------|
-| **Pending** | Initial state - neither fulfilled nor rejected |
-| **Fulfilled** | Operation completed successfully, `resolve()` was called |
-| **Rejected** | Operation failed, `reject()` was called |
+## 解决什么问题
 
-**Important**: A Promise can only transition from `pending` to `fulfilled` OR from `pending` to `rejected` - never back to `pending` and never from `fulfilled` to `rejected` or vice versa. This is called **settling**.
-
-## Promise Lifecycle Diagram
+### 核心问题：回调地狱（Callback Hell）
 
 ```
-                    ┌─────────────┐
-                    │   Pending   │
-                    └──────┬──────┘
-                           │
-              ┌────────────┴────────────┐
-              │                         │
-              ▼                         ▼
-       ┌───────────┐             ┌───────────┐
-       │ Fulfilled │             │ Rejected  │
-       └───────────┘             └───────────┘
-```
-
-## Creating a Promise
-
-### Constructor Syntax
-
-```javascript
-const promise = new Promise((resolve, reject) => {
-  // Async operation here
-  
-  if (/* operation successful */) {
-    resolve(value);  // Transition to fulfilled
-  } else {
-    reject(error);   // Transition to rejected
-  }
-});
-```
-
-### Full Example
-
-```javascript
-function fetchData(url) {
-  return new Promise((resolve, reject) => {
-    console.log(`Fetching data from ${url}...`);
-    
-    // Simulate async operation
-    setTimeout(() => {
-      if (url.startsWith('http')) {
-        resolve({ status: 200, data: 'Response data' });
-      } else {
-        reject(new Error('Invalid URL'));
-      }
-    }, 1000);
+回调地狱示例：
+fs.readFile('a.json', (err, a) => {
+  if (err) throw err;
+  fs.readFile('b.json', (err, b) => {
+    if (err) throw err;
+    fs.readFile('c.json', (err, c) => {
+      if (err) throw err;
+      // ... 更多嵌套
+    });
   });
-}
-
-fetchData('https://api.example.com')
-  .then(data => console.log('Success:', data))
-  .catch(err => console.error('Error:', err.message));
-```
-
-## Promise Implementation Internals
-
-### Internal Properties
-
-A Promise has several internal properties (not accessible directly):
-
-```javascript
-{
-  [[PromiseState]]: 'pending' | 'fulfilled' | 'rejected',
-  [[PromiseResult]]: undefined | value | error,
-  [[PromiseFulfillReactions]]: [],  // Chain of .then() handlers
-  [[PromiseRejectReactions]]: []    // Chain of .catch() handlers
-}
-```
-
-### The Promise Resolution Process
-
-When `resolve()` is called:
-
-1. If the value is another Promise, the current Promise adopts its state
-2. If the value is a thenable (object with `.then()` method), the Promise tries to call it
-3. Otherwise, the Promise immediately fulfills with that value
-
-```javascript
-const p1 = new Promise((resolve) => {
-  resolve(Promise.resolve('nested')); // p1 adopts inner Promise's state
 });
 
-p1.then(val => console.log(val)); // 'nested'
+// 问题：
+// 1. 错误处理重复
+// 2. 缩进越来越深
+// 3. 代码难以阅读和维护
+// 4. 无法 return 值
+// 5. 无法 try/catch
 ```
 
-### Chaining and the Promise Resolution Algorithm
-
-When you chain `.then()`, each `.then()` returns a **new Promise**:
+### Promise 解决方案
 
 ```javascript
-Promise.resolve(5)
-  .then(x => x * 2)      // Returns Promise resolved to 10
-  .then(x => x + 1)      // Returns Promise resolved to 11
-  .then(console.log);    // Prints 11
+// Promise 链式调用
+fs.readFile('a.json')
+  .then(a => fs.readFile('b.json'))
+  .then(b => fs.readFile('c.json'))
+  .then(c => console.log(JSON.parse(c)))
+  .catch(err => console.error(err)); // 统一错误处理
+
+// async/await（Promise 语法糖）
+async function readAll() {
+  try {
+    const a = await fs.promises.readFile('a.json');
+    const b = await fs.promises.readFile('b.json');
+    const c = await fs.promises.readFile('c.json');
+    return JSON.parse(c);
+  } catch (err) {
+    console.error(err);
+  }
+}
 ```
 
-**Key insight**: Each `.then()` creates a new Promise. The original Promise is never modified.
+### Promise 解决了什么
 
-### How Chaining Works
+| 问题 | Promise 解决方案 |
+|------|------------------|
+| 嵌套过深 | `.then()` 链式展平 |
+| 错误处理分散 | `.catch()` 统一处理 |
+| 返回值困难 | `.then()` return 值 |
+| 无法 try/catch | async/await 语法糖 |
+| 信任问题（回调多次调用） | 状态机保证只调用一次 |
+
+---
+
+## 架构设计
+
+### Promise 状态机
 
 ```
-Promise.resolve(5)
-  .then(x => x * 2)   ──► Creates Promise2 (pending until x * 2 completes)
-       │
-       └── Thenable: { then: onFulfilled: (resolve) => resolve(10) }
-       
-  .then(x => x + 1)   ──► Creates Promise3 (pending until x + 1 completes)
-       │
-       └── Thenable: { then: onFulfilled: (resolve) => resolve(11) }
-       
-  .then(console.log)  ──► Creates Promise4 (pending until console.log completes)
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Promise 状态机                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│                         ┌───────────────┐                           │
+│                         │    pending    │  ← 初始状态               │
+│                         │  (待定状态)   │                           │
+│                         └───────┬───────┘                           │
+│                                 │                                    │
+│            ┌────────────────────┼────────────────────┐               │
+│            │                    │                    │               │
+│            │ resolve(value)     │ reject(reason)     │               │
+│            │ (value 可以是      │ (reason 是错误     │               │
+│            │  另一个 Promise)   │  对象)              │               │
+│            │                    │                    │               │
+│            ▼                    ▼                    │               │
+│     ┌───────────────┐   ┌───────────────┐         │               │
+│     │   fulfilled   │   │   rejected    │         │               │
+│     │  (已实现状态)  │   │  (已拒绝状态)  │         │               │
+│     │               │   │               │         │               │
+│     │  只读状态！    │   │   只读状态！   │         │               │
+│     └───────────────┘   └───────────────┘         │               │
+│            │                    │                    │               │
+│            │   .then(onFulfilled)                    │               │
+│            │────────────────────┼────────────────────│               │
+│                                 │                                       │
+│                                 ▼                                       │
+│                         返回新 Promise                                 │
+│                         (继续链式调用)                                  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Return Values in Chain
+### Promise 核心属性
 
-- If a handler **returns a value**, the next Promise resolves to that value
-- If a handler **returns a Promise**, the next Promise adopts that Promise's state
-- If a handler **throws an error**, the next Promise is rejected
+```javascript
+// Promise 内部结构（简化版）
+class Promise {
+  // 状态：pending | fulfilled | rejected
+  // 注意：状态只读，一旦变更不可逆
+  [[PromiseState]] = 'pending';
+  
+  // 结果值：resolved value 或 rejected reason
+  [[PromiseResult]] = undefined;
+  
+  // 回调队列（then/catch 注册的处理器）
+  [[PromiseFulfillReactions]] = [];  // 成功回调队列
+  [[PromiseRejectReactions]] = [];   // 失败回调队列
+}
+```
+
+### .then() 内部机制
+
+```javascript
+// Promise.prototype.then 简化实现
+Promise.prototype.then = function(onFulfilled, onRejected) {
+  // 1. 创建新的 Promise
+  const newPromise = new Promise((resolve, reject) => {
+    
+    // 2. 根据当前 Promise 状态处理
+    switch (this[[PromiseState]]) {
+      case 'fulfilled':
+        // 微任务：确保异步执行
+        queueMicrotask(() => {
+          try {
+            const result = onFulfilled(this[[PromiseResult]]);
+            // 3. 处理返回值（可能是另一个 Promise）
+            resolve(result);
+          } catch (err) {
+            reject(err);
+          }
+        });
+        break;
+        
+      case 'rejected':
+        queueMicrotask(() => {
+          try {
+            const result = onRejected(this[[PromiseResult]]);
+            resolve(result); // 注意：.catch 也返回 resolved
+          } catch (err) {
+            reject(err);
+          }
+        });
+        break;
+        
+      case 'pending':
+        // 4. 状态 pending，排队等待
+        this[[PromiseFulfillReactions]].push({
+          onFulfilled,
+          onRejected,
+          resolve,
+          reject
+        });
+        break;
+    }
+  });
+  
+  return newPromise;
+};
+```
+
+### Promise 链式调用的原理
+
+```javascript
+// .then() 总是返回新的 Promise
+// 这就是链式调用的基础
+
+const p = new Promise((resolve) => resolve(1));
+
+const p2 = p.then(x => x + 1);  // 返回新 Promise
+const p3 = p2.then(x => x + 2); // 继续返回新 Promise
+
+// 等价于：
+p
+  .then(x => x + 1)
+  .then(x => x + 2)
+  .then(x => console.log(x)); // 输出 4
+
+// 内部链式机制：
+// p ──► p2 ──► p3 ──► p4 ──► ...
+//        │      │      │
+//       then   then   then
+```
+
+### 错误传播机制
 
 ```javascript
 Promise.resolve(1)
   .then(x => {
-    // Returns primitive → next Promise resolves to 2
-    return x + 1;
+    throw new Error('Oops!');  // 抛出错误
   })
-  .then(x => {
-    // Returns Promise → next Promise adopts its state
-    return new Promise(resolve => setTimeout(() => resolve(x * 10), 100));
-  })
-  .then(x => {
-    // Throws → next Promise rejects with Error
-    throw new Error('Something went wrong');
-  })
+  .then(x => x + 1)           // 跳过（因为前一个 rejected）
   .catch(err => {
-    // This catches the error above
-    console.error(err.message);
+    console.error(err);        // 捕获错误
+    return -1;                 // 返回值使链恢复
+  })
+  .then(x => console.log(x));  // 输出 -1
+```
+
+---
+
+## 优劣势分析
+
+### ✅ 优势
+
+| 优势 | 说明 |
+|------|------|
+| **统一接口** | 任何异步操作都可以 Promise 化 |
+| **链式调用** | 代码扁平化，避免嵌套 |
+| **错误传播** | `.catch()` 统一错误处理 |
+| **组合能力** | `Promise.all()` / `race()` / `allSettled()` |
+| **信任保障** | Promise 只能 resolve/reject 一次 |
+| **async/await** | 同步写法处理异步 |
+
+### ❌ 劣势
+
+| 劣势 | 说明 |
+|------|------|
+| **无法取消** | Promise 创建后无法中途取消 |
+| **同步陷阱** | `new Promise((resolve) => resolve(1))` 立即执行 |
+| **内存泄漏** | 链式调用长时未处理的 rejection 可能导致内存问题 |
+| **调试困难** | async 堆栈不连续 |
+| **仍需回调** | `.then()` 本质还是回调 |
+
+### ⚠️ 适用场景
+
+| 场景 | 推荐方案 |
+|------|----------|
+| 多个并行异步操作 | `Promise.all()` |
+| 竞速多个操作 | `Promise.race()` |
+| 需要取消 | 不适合 Promise，用 AbortController |
+| 同步代码异步化 | `new Promise()` |
+| 顺序依赖的异步 | `async/await` |
+
+---
+
+## 代码演示
+
+### 手写 Promise（符合 Promise/A+ 规范）
+
+```javascript
+// 简化的 Promise 实现（帮助理解原理）
+class MyPromise {
+  constructor(executor) {
+    this.state = 'pending';
+    this.value = undefined;
+    this.handlers = []; // [{onFulfilled, onRejected, resolve, reject}]
+    
+    const resolve = (value) => {
+      if (this.state !== 'pending') return;
+      this.state = 'fulfilled';
+      this.value = value;
+      this.handlers.forEach(this.#executeHandlers);
+    };
+    
+    const reject = (reason) => {
+      if (this.state !== 'pending') return;
+      this.state = 'rejected';
+      this.value = reason;
+      this.handlers.forEach(this.#executeHandlers);
+    };
+    
+    try {
+      executor(resolve, reject);
+    } catch (err) {
+      reject(err);
+    }
+  }
+  
+  #executeHandlers = ({onFulfilled, onRejected, resolve, reject}) => {
+    queueMicrotask(() => {
+      try {
+        if (this.state === 'fulfilled') {
+          const result = typeof onFulfilled === 'function' 
+            ? onFulfilled(this.value) 
+            : this.value;
+          resolve(result);
+        } else if (this.state === 'rejected') {
+          if (typeof onRejected === 'function') {
+            resolve(onRejected(this.value)); // .catch 也 resolve
+          } else {
+            reject(this.value);
+          }
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+  
+  then(onFulfilled, onRejected) {
+    return new MyPromise((resolve, reject) => {
+      this.handlers.push({
+        onFulfilled,
+        onRejected,
+        resolve,
+        reject
+      });
+      if (this.state !== 'pending') {
+        this.#executeHandlers(this.handlers[this.handlers.length - 1]);
+      }
+    });
+  }
+  
+  catch(onRejected) {
+    return this.then(null, onRejected);
+  }
+  
+  finally(onFinally) {
+    return this.then(
+      value => { onFinally(); return value; },
+      reason => { onFinally(); throw reason; }
+    );
+  }
+}
+```
+
+### Promise.all vs Promise.allSettled
+
+```javascript
+// Promise.all - fail-fast
+Promise.all([
+  Promise.resolve(1),
+  Promise.reject(new Error('fail')),  // 立即 reject
+  Promise.resolve(3)
+]).then(results => console.log(results))
+  .catch(err => console.error(err)); // Error: fail
+
+// Promise.allSettled - 等所有完成
+Promise.allSettled([
+  Promise.resolve(1),
+  Promise.reject(new Error('fail')),
+  Promise.resolve(3)
+]).then(results => {
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      console.log(`[${i}] fulfilled: ${r.value}`);
+    } else {
+      console.log(`[${i}] rejected: ${r.reason.message}`);
+    }
   });
-```
-
-## Microtask Queue
-
-Promise callbacks (`.then()`, `.catch()`, `.finally()`) are executed as **microtasks**, which have higher priority than regular async tasks (macrotasks like `setTimeout`).
-
-```javascript
-console.log('1: Start');
-
-setTimeout(() => console.log('4: setTimeout'), 0);
-
-Promise.resolve()
-  .then(() => console.log('2: Promise microtask'));
-
-console.log('3: End');
-
-// Output:
-// 1: Start
-// 3: End
-// 2: Promise microtask
-// 4: setTimeout
-```
-
-### Execution Order
-
-1. All synchronous code runs first
-2. All microtasks (Promises, queueMicrotask) run until empty
-3. One macrotask (setTimeout, setImmediate, I/O) runs
-4. Repeat
-
-## Error Handling Internals
-
-### How `.catch()` Works
-
-`.catch(onRejected)` is equivalent to `.then(null, onRejected)`:
-
-```javascript
-// These are equivalent:
-promise.catch(err => handleError(err));
-promise.then(null, err => handleError(err));
-```
-
-### Error Propagation
-
-Errors propagate through the chain until caught:
-
-```javascript
-Promise.reject(new Error('Initial error'))
-  .then(x => x + 1)      // Skipped - passes Error to next handler
-  .then(x => x * 2)      // Skipped
-  .catch(err => {
-    console.error(err.message); // Catches and handles
-    return 'recovered';         // Returns value to next .then()
-  })
-  .then(x => console.log(x)); // 'recovered'
-```
-
-### Unhandled Rejections
-
-If a Promise rejects and there's no `.catch()`, a **unhandledrejection** event is emitted:
-
-```javascript
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
 });
-
-Promise.reject(new Error('Oops!'));
-// Event emitted after one tick
 ```
 
-## Static Promise Methods
+---
 
-### Promise.resolve()
+## 常见误区
 
-Creates a resolved Promise:
+| 误区 | 正确理解 |
+|------|----------|
+| ❌ `.then()` 是异步的 | ✅ `.then()` 本身是同步注册，回调通过微任务执行 |
+| ❌ `.catch()` 会重新抛出错误 | ✅ `.catch()` 默认返回 resolved Promise |
+| ❌ `Promise.resolve()` 创建新 Promise | ✅ 沿用已有 Promise（如果是的话） |
+| ❌ `await` 会阻塞线程 | ✅ `await` 只暂停当前 async 函数，事件循环继续 |
+| ❌ `finally()` 等于 `.catch()` | ✅ `finally()` 不接收参数，用于清理 |
 
-```javascript
-Promise.resolve(value);
-// Equivalent to:
-new Promise(resolve => resolve(value));
-```
+---
 
-If passed a Promise, returns that Promise (not a new one):
+## 面试题
 
-```javascript
-const p = Promise.resolve(5);
-const p2 = Promise.resolve(p);
-console.log(p === p2); // true
-```
-
-### Promise.reject()
-
-Creates a rejected Promise:
+### Q1: 手写一个 Promise.all
 
 ```javascript
-Promise.reject(error);
-// Equivalent to:
-new Promise((_, reject) => reject(error));
-```
-
-### Promise.all()
-
-Waits for all Promises to fulfill or any to reject:
-
-```javascript
-const promises = [
-  Promise.resolve(1),
-  Promise.resolve(2),
-  Promise.resolve(3)
-];
-
-const results = await Promise.all(promises);
-console.log(results); // [1, 2, 3]
-```
-
-**Behavior**:
-- If **all** resolve → resolves with array of results
-- If **any** reject → rejects immediately with that error
-- Maintains order regardless of completion order
-
-### Promise.allSettled()
-
-Waits for all Promises to settle (fulfill or reject):
-
-```javascript
-const promises = [
-  Promise.resolve(1),
-  Promise.reject(new Error('Failed')),
-  Promise.resolve(3)
-];
-
-const results = await Promise.allSettled(promises);
-// [
-//   { status: 'fulfilled', value: 1 },
-//   { status: 'rejected', reason: Error('Failed') },
-//   { status: 'fulfilled', value: 3 }
-// ]
-```
-
-### Promise.race()
-
-Resolves or rejects as soon as **one** Promise settles:
-
-```javascript
-const promises = [
-  new Promise(resolve => setTimeout(() => resolve('fast'), 100)),
-  new Promise(resolve => setTimeout(() => resolve('slow'), 500))
-];
-
-const result = await Promise.race(promises);
-console.log(result); // 'fast' (after ~100ms)
-```
-
-### Promise.any()
-
-Resolves when **any** Promise fulfills (ignores rejections until all reject):
-
-```javascript
-const promises = [
-  Promise.reject(new Error('Error 1')),
-  Promise.resolve(2),
-  Promise.reject(new Error('Error 3'))
-];
-
-const result = await Promise.any(promises);
-console.log(result); // 2
-```
-
-**Error case**: If all reject, returns `AggregateError`:
-
-```javascript
-Promise.any([
-  Promise.reject(new Error('a')),
-  Promise.reject(new Error('b'))
-]).catch(err => console.log(err.errors)); // ['a', 'b']
-```
-
-## Promise vs Callback Comparison
-
-| Aspect | Callback | Promise |
-|--------|----------|---------|
-| Inversion of Control | Yes - you hand control to another function | No - you retain control via `.then()` |
-| Error Handling | Must check error parameter in every callback | `.catch()` catches all errors in chain |
-| Chaining | Callback hell / pyramid of doom | Natural `.then()` chaining |
-| Composability | Difficult to compose | Easy with `Promise.all()`, `Promise.race()`, etc. |
-| Timing | Depends on implementation | Predictable state transitions |
-
-### Callback Hell Example
-
-```javascript
-fs.readFile('file1.txt', (err, data1) => {
-  if (err) throw err;
-  fs.readFile('file2.txt', (err, data2) => {
-    if (err) throw err;
-    fs.readFile('file3.txt', (err, data3) => {
-      if (err) throw err;
-      // Deep nesting!
+function promiseAll(promises) {
+  return new Promise((resolve, reject) => {
+    const results = new Array(promises.length);
+    let completed = 0;
+    
+    if (promises.length === 0) {
+      resolve([]);
+      return;
+    }
+    
+    promises.forEach((p, i) => {
+      Promise.resolve(p).then(
+        value => {
+          results[i] = value;
+          completed++;
+          if (completed === promises.length) {
+            resolve(results);
+          }
+        },
+        reason => {
+          reject(reason);
+        }
+      );
     });
   });
-});
+}
 ```
 
-### Promise Chain Example
+### Q2: 解释输出顺序
 
 ```javascript
-fs.promises.readFile('file1.txt')
-  .then(data1 => fs.promises.readFile('file2.txt'))
-  .then(data2 => fs.promises.readFile('file3.txt'))
-  .then(data3 => /* handle all data */)
-  .catch(err => console.error(err));
+Promise.resolve()
+  .then(() => console.log('1'))
+  .then(() => console.log('2'));
+
+Promise.resolve()
+  .then(() => console.log('3'))
+  .then(() => console.log('4'));
+
+// 输出：1 3 2 4（不是 1 2 3 4）
 ```
 
-## Advanced: Creating Thenables
+**原因**：微任务队列按注册顺序执行，但 `then()` 的回调在当前微任务完成后才注册下一个。
 
-A thenable is any object with a `.then()` method. Promises can work with any thenable:
+### Q3: async/await 和 Promise 的关系
 
 ```javascript
-const thenable = {
-  then(onFulfill, onReject) {
-    // Can be sync or async
-    onFulfill('value');
-  }
-};
+async function foo() {
+  return 1;
+}
 
-Promise.resolve(thenable).then(val => console.log(val)); // 'value'
+// 等价于：
+function foo() {
+  return Promise.resolve(1);
+}
+
+// 内部转换：
+// async function → Generator Function
+// await → yield + Promise.then()
 ```
 
-This is how async/await desugars - it uses the thenable protocol.
+---
 
-## Advanced: Executor Function
+## 延伸阅读
 
-The function passed to `new Promise()` is called the **executor**. It runs:
+### 官方文档
+- [Promise 官方文档](https://nodejs.org/api/promise.html)
+- [Promise/A+ 规范](https://promisesaplus.com/)
 
-1. **Immediately** and **synchronously** when the Promise is created
-2. Before any other code on that tick
+### 源码位置
+- `lib/internal/per_context/primordials.js` — Promise 构造函数
+- `lib/internal/bootstrap/node.js` — Promise 微任务设置
 
-```javascript
-console.log('1');
-const p = new Promise((resolve) => {
-  console.log('2'); // Runs immediately
-  resolve('done');
-});
-console.log('3');
-p.then(val => console.log('4'));
+---
 
-console.log('5');
-// Output: 1, 2, 3, 5, 4
-```
+## 相关节点
 
-## Summary
-
-- Promises have three states: pending, fulfilled, rejected
-- Once settled, a Promise's state cannot change
-- `.then()` always returns a new Promise
-- Promise callbacks are microtasks with higher priority than macrotasks
-- Error propagation works through the chain via `.catch()`
-- Promise static methods (`all`, `race`, `any`, `allSettled`) provide powerful composition
+- [ async-await-transform ](../02-async/async-await-transform.md) — async/await 转换原理
+- [ concurrency-patterns ](../02-async/concurrency-patterns.md) — 并发模式
