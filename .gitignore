@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+*.o
+*.so
+*.node
+*.gz
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+# Compiled native addons
+03-practices/p06-native-addon/build/
+
+# Lock files (optional - comment out if you want to track package locks)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
