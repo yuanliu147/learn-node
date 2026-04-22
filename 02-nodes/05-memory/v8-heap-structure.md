@@ -1,48 +1,48 @@
-# V8 Heap Structure
+# V8 堆结构
 
-## Architectural Overview
+## 架构概述
 
-V8's heap architecture reflects fundamental trade-offs in memory management: throughput vs. pause time, memory footprint vs. allocation speed, and GC complexity vs. correctness. Understanding *why* the heap is structured this way informs how we write memory-efficient code.
+V8 的堆架构反映了内存管理中的基本权衡：吞吐量 vs 暂停时间、内存占用 vs 分配速度、GC 复杂度 vs 正确性。理解*为什么*堆以这种方式结构化，有助于了解如何编写内存高效代码。
 
-## Design Philosophy
+## 设计理念
 
-### The Generational Hypothesis
+### 分代假说
 
-The heap's core architectural decision stems from an empirical observation: **most objects die young**.
+堆的核心架构决策源于一个经验观察：**大多数对象死得早**。
 
 ```
-Allocation Rate:  ────────────────────────────────
+分配率:  ────────────────────────────────
                   ████████                       (young)
                   ████████████████               (older)
                   ████████████████████████████████ (old)
 
-Time:            0 ────────────────────────────────→
+时间:            0 ────────────────────────────────→
 
-Reality: ~90% of objects become unreachable within milliseconds
+现实: 约 90% 的对象在毫秒内变得不可达
 ```
 
-This hypothesis, validated by production profiling at Google, justifies the **generational layout**: frequent, cheap collections on young objects + infrequent, expensive collections on old objects.
+这个假说，谷歌生产环境分析验证，使**分代布局**变得合理：年轻对象频繁、廉价的收集 + 老年对象不频繁、昂贵的收集。
 
-### Space Separation as Architectural Pattern
+### 空间分离作为架构模式
 
-V8 doesn't use a flat heap—it partitions memory into specialized spaces, each optimized for specific object lifetimes and access patterns:
+V8 不使用平坦堆——它将内存分区为专门的空间，每个都针对特定的对象生命周期和访问模式优化：
 
-| Space | Architectural Rationale |
-|-------|---------------------------|
-| **New Space** | Fast allocation via bump-pointer; simple evacuation; minimal fragmentation |
-| **Old Space** | Optimized for density over speed; supports mark-sweep-compact |
-| **Large Object Space** | Bypasses page fragmentation constraints; never moved (compaction infeasible) |
-| **Code Space** | Write-protected executable memory; separation enables security hardening |
-| **Map Space** | Pointer stability required for hidden class identity; isolated for fast lookup |
+| 空间 | 架构理由 |
+|------|---------|
+| **New Space** | 通过 bump-pointer 快速分配；简单晋升；最小碎片化 |
+| **Old Space** | 针对密度而非速度优化；支持 mark-sweep-compact |
+| **Large Object Space** | 绕过页面碎片化约束；永不移动（压缩不可行） |
+| **Code Space** | 写保护可执行内存；分离实现安全加固 |
+| **Map Space** | 隐藏类身份需要指针稳定性；隔离实现快速查找 |
 
-## Heap Regions Deep Dive
+## 堆区域深入解析
 
-### Young Generation (New Space)
+### 年轻代（New Space）
 
-**Architecture**: Semi-space collector design with two equal halves (From-Space / To-Space).
+**架构**：双半空间设计（From-Space / To-Space）。
 
 ```
-Allocation:                    Evacuation:
+分配:                    晋升:
 ┌─────────────────┐           ┌─────────────────┐
 │   From-Space    │  ──────→  │   To-Space      │
 │   (live objects)│   minor   │   (survivors)   │
@@ -53,19 +53,19 @@ Allocation:                    Evacuation:
               (survivors ≥ age threshold)
 ```
 
-**Why semi-space?** Simplicity: single pass copying, no fragmentation, predictable performance. Cost: 50% memory overhead during collection.
+**为什么半空间？** 简单：单遍复制，无碎片化，可预测性能。代价：收集期间 50% 内存开销。
 
-**Design constraints**:
-- Size: 1-8 MB (configurable via `--max-new-space-size`)
-- Collection: Stop-the-world Scavenge, typically < 1ms
-- Survival tracking: age counter, promoted to Old Space after 2 minor GCs
+**设计约束**：
+- 大小：1-8 MB（可通过 `--max-new-space-size` 配置）
+- 收集：Stop-the-world Scavenge，通常 < 1ms
+- 存活追踪：年龄计数器，2 次 minor GC 后晋升到 Old Space
 
-### Old Generation (Old Space)
+### 老年代（Old Space）
 
-**Architecture**: Mark-Sweep-Compact collector, optimized for memory density.
+**架构**：Mark-Sweep-Compact 收集器，针对内存密度优化。
 
 ```
-Mark Phase:      Sweep Phase:       Compact Phase:
+Mark 阶段:      Sweep 阶段:       Compact 阶段:
    ○ ○ ○          ○   ○              ○○○○○
    ○   ○    →     ○   ○     →        ○○○○○
    ○   ○          ○   ○              ○○○○○
@@ -73,16 +73,16 @@ Mark Phase:      Sweep Phase:       Compact Phase:
    (live = marked)  (dead = swept)   (moved + defragmented)
 ```
 
-**Why compact?** External fragmentation would eventually cause allocation failures despite sufficient total memory.
+**为什么压缩？** 外部碎片化最终会导致尽管总内存充足但分配失败。
 
-**Design constraints**:
-- Default: 50MB to >1GB (`--max-old-space-size`)
-- Major GC triggered on allocation failure
-- Longer pause times (100ms+) acceptable for rare events
+**设计约束**：
+- 默认：50MB 到 >1GB（`--max-old-space-size`）
+- Major GC 在分配失败时触发
+- 更长的暂停时间（100ms+）对稀有事件可接受
 
-### Large Objects Space
+### 大对象空间
 
-**Architecture**: Objects >1MB bypass normal allocator entirely.
+**架构**：对象 >1MB 完全绕过正常分配器。
 
 ```
 Normal Allocation:              Large Object:
@@ -92,13 +92,13 @@ page ← object          VS        (never moved, never compacted)
 page ← object
 ```
 
-**Why separate?** Moving 1MB+ objects is expensive; fragmentation in this space doesn't affect normal allocation.
+**为什么分离？** 移动 1MB+ 对象代价高昂；这个空间中的碎片化不影响正常分配。
 
-**Trade-off**: No compaction → potential fragmentation over time.
+**权衡**：无压缩 → 随着时间推移可能碎片化。
 
 ### Code Space
 
-**Architecture**: Write-protected, executable memory region.
+**架构**：写保护、可执行内存区域。
 
 ```
 ┌─────────────────────────────────────┐
@@ -111,11 +111,11 @@ page ← object
 └─────────────────────────────────────┘
 ```
 
-**Why write-protected?** Security: JIT code shouldn't be modifiable after creation (mitigates exploits).
+**为什么写保护？** 安全：JIT 代码创建后不应可修改（减少漏洞利用）。
 
 ### Map Space
 
-**Architecture**: All `Map` objects (hidden classes) stored separately for pointer stability.
+**架构**：所有 `Map` 对象（隐藏类）分开存储以保证指针稳定性。
 
 ```
 Map Space:
@@ -130,9 +130,9 @@ Map Space:
 Code references Map → Map determines object shape
 ```
 
-**Why isolated?** Map identity matters for property access optimization. If Maps moved during compaction, every object using that Map would need pointer updates.
+**为什么隔离？** Map 身份对属性访问优化很重要。如果 Map 在压缩期间移动，使用该 Map 的每个对象都需要指针更新。
 
-## Memory Allocation Flow
+## 内存分配流
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -203,9 +203,9 @@ Code references Map → Map determines object shape
                             └─────────────────┘       └─────────────────┘
 ```
 
-## Architectural Trade-offs
+## 架构权衡
 
-### Memory vs. Pause Time
+### 内存 vs 暂停时间
 
 ```
 Pause Time:
@@ -220,29 +220,29 @@ Minor GC: ~0.5-1ms (constant, regardless of heap)
 Major GC: O(heap) - grows with heap size
 ```
 
-**Key insight**: Generational design bounds pause times. Application responsiveness depends on young generation fits in pause budget.
+**关键洞察**：分代设计限制暂停时间。应用响应性取决于年轻代是否适合暂停预算。
 
-### Fragmentation Management
+### 碎片化管理
 
-| Strategy | Pros | Cons |
-|----------|------|------|
-| **Mark-Sweep** | Fast mark, simple | Fragmentation accumulates |
-| **Mark-Compact** | No fragmentation | Copying overhead |
-| **Semi-Space** | Simple, predictable | 50% memory overhead |
+| 策略 | 优点 | 缺点 |
+|------|------|------|
+| **Mark-Sweep** | 快速标记，简单 | 碎片化累积 |
+| **Mark-Compact** | 无碎片化 | 复制开销 |
+| **Semi-Space** | 简单，可预测 | 50% 内存开销 |
 
-V8 uses all three: Mark-Sweep for Old Space (speed), Mark-Compact when fragmentation exceeds threshold, Semi-Space for New Space.
+V8 三种都用：Old Space 用 Mark-Sweep（速度），碎片化超过阈值时用 Mark-Compact，New Space 用 Semi-Space。
 
-## Heap Limits Architecture
+## 堆限制架构
 
-V8 enforces memory limits as a **safety net**, not a target:
+V8 将内存限制作为**安全网**，而非目标：
 
 ```javascript
-// Default limits (architectural constraints)
+// 默认限制（架构约束）
 32-bit: ~1.4GB heap limit
 64-bit: ~3.5GB heap limit
 
-// Why limits? Prevents single process from consuming entire system
-// Allows OS to keep memory available for other processes
+// 为什么限制？防止单个进程消耗整个系统
+// 允许 OS 为其他进程保持内存可用
 ```
 
 ```
@@ -262,48 +262,48 @@ Low Pressure              High Pressure
                           old space
 ```
 
-## Monitoring Architecture
+## 监控架构
 
 ```javascript
-// v8.getHeapStatistics() maps to internal heap spaces
+// v8.getHeapStatistics() 映射到内部堆空间
 const v8 = require('v8');
 const stats = v8.getHeapStatistics();
 
 console.log({
-  // Space-specific metrics
-  total_heap_size: stats.total_heap_size,           // All spaces combined
-  used_heap_size: stats.used_heap_size,             // Live data
+  // 空间特定指标
+  total_heap_size: stats.total_heap_size,           // 所有空间合计
+  used_heap_size: stats.used_heap_size,             // 活数据
   
-  // New Space metrics (not directly exposed, inferred from deltas)
+  // New Space 指标（不直接暴露，从增量推断）
   // young_space_size: ~1-8MB configured
   
-  // Memory allocator metrics
-  malloced_memory: stats.malloced_memory,           // Native allocations
+  // 内存分配器指标
+  malloced_memory: stats.malloced_memory,           // 原生分配
   peak_malloced_memory: stats.peak_malloced_memory,
   
-  // Limit info
-  heap_size_limit: stats.heap_size_limit,           // ~3.5GB on 64-bit
+  // 限制信息
+  heap_size_limit: stats.heap_size_limit,           // 64 位上约 3.5GB
 });
 ```
 
-## Architecture-Informed Coding
+## 架构指导编码
 
-**Why this matters for application architecture**:
+**这对应用架构为什么重要**：
 
-1. **Object lifetime design**: Align object lifetime with heap region characteristics
-   - Short-lived: New Space (fast allocation, cheap collection)
-   - Long-lived: Old Space (avoid frequent minor GC)
+1. **对象生命周期设计**：使对象生命周期与堆区域特征对齐
+   - 短生命周期：New Space（快速分配，廉价收集）
+   - 长生命周期：Old Space（避免频繁 minor GC）
 
-2. **Cache architecture**: Understanding promotion helps design effective caches
-   - Cache entries that survive 2 minor GCs get promoted to Old Space
-   - Unbounded caches = unbounded Old Space growth
+2. **缓存架构**：理解晋升有助于设计有效缓存
+   - 存活 2 次 minor GC 的缓存条目被晋升到 Old Space
+   - 无界缓存 = 无界 Old Space 增长
 
-3. **Memory limit planning**: Knowing limits informs `--max-old-space-size` tuning
-   - I/O-bound services: Larger heap (more buffering)
-   - CPU-bound services: Smaller heap (faster GC cycles)
+3. **内存限制规划**：了解限制告知 `--max-old-space-size` 调优
+   - I/O 密集型服务：更大堆（更多缓冲）
+   - CPU 密集型服务：更小堆（更快 GC 周期）
 
-## Related
+## 相关
 
-- [Scavenge Algorithm](./scavenge-algorithm.md) - Minor GC architecture
-- [Mark-Sweep-Compact](./mark-sweep-compact.md) - Major GC architecture
-- [Memory Leak Patterns](./memory-leak-patterns.md) - How leaks exploit this architecture
+- [Scavenge 算法](./scavenge-algorithm.md) - Minor GC 架构
+- [Mark-Sweep-Compact](./mark-sweep-compact.md) - Major GC 架构
+- [内存泄漏模式](./memory-leak-patterns.md) - 泄漏如何利用此架构

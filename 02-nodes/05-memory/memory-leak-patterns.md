@@ -1,60 +1,60 @@
-# Memory Leak Patterns in Node.js/V8
+# Node.js/V8 内存泄漏模式
 
-## Architectural Perspective
+## 架构视角
 
-Memory leaks aren't just "forgotten cleanup"—they're **architectural failures** where object lifetimes are unintentionally extended beyond their intended scope. Understanding V8's heap architecture reveals *why* certain patterns cause leaks and *why* specific solutions work.
+内存泄漏不仅仅是"忘记清理"—它们是**架构失败**，其中对象生命周期被无意地延长到预期范围之外。理解 V8 的堆架构揭示了*为什么*某些模式导致泄漏，以及*为什么*特定解决方案有效。
 
-## The Core Problem: Unexpected Retention
+## 核心问题：意外保留
 
-V8's garbage collector tracks object reachability, not developer intent. If an object is reachable via any reference chain, it's alive—regardless of whether your business logic says it should be.
+V8 的垃圾回收器追踪对象的可达性，而非开发者意图。如果一个对象通过任何引用链可达，它就是活的——无论你的业务逻辑说它是否应该如此。
 
 ```
-Leak Mechanism:
+泄漏机制：
 
-Intent:     Object X should die after request completes
+意图:     Object X 应该在请求完成后死亡
             ─────────────────────────────────────────→
 
-Reality:    Object X ←──── closure ────── handler ←─ event emitter
+现实:    Object X ←──── closure ────── handler ←─ event emitter
             (reachable)    captures       retained    (never removed)
 
-            V8 GC sees: Object X is reachable
-            Result: X stays alive indefinitely
+            V8 GC 看到: Object X 是可达的
+            结果: X 无限期存活
 ```
 
-## Pattern 1: Global Scope Anchors
+## 模式 1：全局作用域锚点
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-Global variables are roots in V8's reference graph. GC starts from roots (global object, stack frames) and marks all reachable objects. Globals are **always reachable**.
+全局变量是 V8 引用图中的根。GC 从根（全局对象、栈帧）开始，标记所有可达对象。全局变量**总是可达的**。
 
 ```javascript
-// ARCHITECTURE: Global object is a GC root
-// global leak = permanent leak
+// 架构: 全局对象是 GC 根
+// 全局泄漏 = 永久泄漏
 
-// Pattern: Implicit global
+// 模式: 隐式全局变量
 function processData(data) {
-    result = processLargeData(data);  // 'result' becomes global
+    result = processLargeData(data);  // 'result' 变成全局的
     return result;
 }
 
-// Pattern: Global cache without bounds
-const cache = {};  // Attached to global object
+// 模式: 无界限的全局缓存
+const cache = {};  // 附加到全局对象
 
-// Every entry in this cache is a GC root
-// Entries survive until process restart
+// 这个缓存中的每个条目都是 GC 根
+// 条目存活到进程重启
 ```
 
-### Architectural Solution
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: Module scope (not global)
-const cache = new Map();  // Module-level, not global
-                        // Dies when module dies (process restart)
+// 解决方案 1: 模块作用域（非全局）
+const cache = new Map();  // 模块级，非全局
+                        // 模块死亡时死亡（进程重启）
 
-// SOLUTION 2: Explicit lifecycle with WeakMap
-const cache = new WeakMap();  // Keys eligible for GC when no refs exist
+// 解决方案 2: 带 WeakMap 的显式生命周期
+const cache = new WeakMap();  // 没有引用时 key 可被 GC
 
-// SOLUTION 3: Limiting wrapper
+// 解决方案 3: 限制包装器
 class BoundedCache {
     #maxSize;
     #cache = new Map();
@@ -70,88 +70,88 @@ class BoundedCache {
     set(key, value) {
         if (this.#cache.size >= this.#maxSize) {
             const firstKey = this.#cache.keys().next().value;
-            this.#cache.delete(firstKey);  // LRU eviction
+            this.#cache.delete(firstKey);  // LRU 驱逐
         }
         this.#cache.set(key, value);
     }
 }
 ```
 
-## Pattern 2: Closure Capture Chains
+## 模式 2：闭包捕获链
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-Closures in V8 create a **scope chain** that GC must trace. Each closure captures its entire lexical environment—not just the variables it uses.
+V8 中的闭包创建**作用域链**，GC 必须追踪。每个闭包捕获其整个词法环境——不仅仅是它使用的变量。
 
 ```javascript
-// ARCHITECTURE: Closures create persistent scope chains
+// 架构: 闭包创建持久作用域链
 
 function createHandler() {
     const largeBuffer = new Array(10_000_000);  // 80MB
     
-    // This closure captures: largeBuffer, someService, config
+    // 这个闭包捕获: largeBuffer, someService, config
     return function handler(request) {
         return someService.process(request, largeBuffer);
     };
 }
 
-// Scope chain: handler → createHandler's scope → module scope → ...
-// largeBuffer stays reachable as long as handler exists
+// 作用域链: handler → createHandler's scope → module scope → ...
+// largeBuffer 只要 handler 存在就保持可达
 ```
 
-### The Hidden Class Interaction
+### 隐藏类交互
 
 ```javascript
-// Even worse: closure prevents Map space optimization
+// 更糟: 闭包阻止 Map 空间优化
 class RequestHandler {
     #largeData;
-    #map;  // Hidden class tracks property shapes
+    #map;  // 隐藏类追踪属性形状
     
     constructor(data) {
-        this.#largeData = data;  // Large buffer in object
+        this.#largeData = data;  // 对象中的大缓冲区
     }
     
     createCallback() {
-        // This closure keeps 'this' alive
-        // V8 can't optimize away #largeData even if never used
+        // 这个闭包保持 'this' 存活
+        // V8 不能优化掉 #largeData 即使从未使用
         return (result) => {
-            return this.#largeData[0];  // Captures entire object
+            return this.#largeData[0];  // 捕获整个对象
         };
     }
 }
 ```
 
-### Architectural Solution
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: Extract only what you need
+// 解决方案 1: 只提取你需要的
 function createHandler() {
     const largeBuffer = new Array(10_000_000);
     
-    // Only capture the specific data needed
+    // 只捕获需要的特定数据
     const processFn = largeBuffer.process.bind(largeBuffer);
     
     return function handler(request) {
-        return processFn(request);  // Don't capture largeBuffer
+        return processFn(request);  // 不捕获 largeBuffer
     };
 }
 
-// SOLUTION 2: Explicit dereferencing
+// 解决方案 2: 显式解引用
 function createHandler() {
     const largeBuffer = new Array(10_000_000);
     const handler = function handler(request) {
-        return largeBuffer[0];  // Intentional capture
+        return largeBuffer[0];  // 故意捕获
     };
     
-    // Return cleanup function
+    // 返回清理函数
     handler.destroy = () => {
-        largeBuffer.length = 0;  // Release memory
+        largeBuffer.length = 0;  // 释放内存
     };
     
     return handler;
 }
 
-// SOLUTION 3: Use WeakRef for optional large data
+// 解决方案 3: 对可选大数据使用 WeakRef
 function createHandler() {
     const largeBuffer = new WeakRef(new Array(10_000_000));
     
@@ -165,50 +165,50 @@ function createHandler() {
 }
 ```
 
-## Pattern 3: Event Emitter Leaks
+## 模式 3：事件发射器泄漏
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-Event emitters create a **bidirectional reference graph**: listeners hold references to their emitters (via `this`), and emitters hold references to listeners.
+事件发射器创建**双向引用图**：监听器通过 `this` 持有对其发射器的引用，发射器持有对监听器的引用。
 
 ```javascript
-// ARCHITECTURE: Bidirectional retention
+// 架构: 双向保留
 emitter.on('event', handler);
     │
     ├── emitter holds: Map<event, Set<handler>>
     │
     └── handler closure holds: this (emitter reference)
 
-If emitter lives forever but handler should be temporary...
-handler (and its closure scope) lives forever too.
+如果 emitter 永远存活但 handler 应该是临时的...
+handler（及其闭包作用域）也永远存活。
 ```
 
-### The Classic Accumulation Pattern
+### 经典累积模式
 
 ```javascript
-// BAD: Each call adds a listener, none removed
+// 坏: 每次调用添加监听器，没有移除
 class RequestProcessor {
     #emitter = new EventEmitter();
     
     processRequests() {
-        // Listeners accumulate with each call
+        // 监听器随每次调用累积
         this.#emitter.on('data', (data) => {
-            this.handleData(data);  // 'this' keeps processor alive
+            this.handleData(data);  // 'this' 保持 processor 存活
         });
     }
 }
 
-// Each processRequests() call:
-// 1. Creates new closure
-// 2. Closure captures 'this' (entire RequestProcessor)
-// 3. Listener added to emitter
-// 4. Processor can never be GC'd while emitter lives
+// 每次 processRequests() 调用:
+    // 1. 创建新闭包
+    // 2. 闭包捕获 'this'（整个 RequestProcessor）
+    // 3. 监听器添加到 emitter
+    // 4. 只要 emitter 存活，Processor 就无法被 GC
 ```
 
-### Architectural Solution
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: AbortController pattern (modern)
+// 解决方案 1: AbortController 模式（现代）
 class RequestProcessor {
     #emitter = new EventEmitter();
     #aborts = new AbortController();
@@ -221,11 +221,11 @@ class RequestProcessor {
     }
     
     destroy() {
-        this.#aborts.abort();  // Removes all registered listeners
+        this.#aborts.abort();  // 移除所有注册的监听器
     }
 }
 
-// SOLUTION 2: Explicit listener lifecycle
+// 解决方案 2: 显式监听器生命周期
 class RequestProcessor {
     #emitter = new EventEmitter();
     #listener = null;
@@ -243,84 +243,84 @@ class RequestProcessor {
     }
 }
 
-// SOLUTION 3: Once for transient handlers
+// 解决方案 3: 瞬态处理器使用 once
 function onFirstData(emitter, handler) {
     emitter.once('data', (data) => {
         handler(data);
-    });  // Auto-removed after first invocation
+    });  // 首次调用后自动移除
 }
 ```
 
-## Pattern 4: Timer Anchoring
+## 模式 4：定时器锚点
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-`setInterval`/`setTimeout` create a **root reference** that the timer system holds. The callback—and everything it captures—remains reachable until the timer is cleared or the process exits.
+`setInterval`/`setTimeout` 创建**根引用**，定时器系统持有该引用。回调——及其捕获的所有内容——保持可达，直到定时器被清除或进程退出。
 
 ```javascript
-// ARCHITECTURE: Timer system holds references
+// 架构: 定时器系统持有引用
 globalTimers.add(timerId, callback);
     │
     └── callback closure captured
             │
             └── Everything callback references stays alive
 
-// Timer not cleared = closure scope lives forever
+// 定时器未清除 = 闭包作用域永远存活
 ```
 
-### Accumulation via Closures
+### 通过闭包累积
 
 ```javascript
-// BAD: Closure + interval = memory growth
+// 坏: 闭包 + interval = 内存增长
 function startProcessing() {
-    const data = loadLargeData();  // Captured by interval
+    const data = loadLargeData();  // 被 interval 捕获
     
     setInterval(() => {
-        processData(data);  // data stays alive
+        processData(data);  // data 保持存活
     }, 1000);
 }
 
-// Each call to startProcessing():
-// 1. Creates new large data array
-// 2. Creates interval referencing that data
-// 3. Interval lives forever (never cleared)
-// 4. All data arrays accumulate
+// 每次 startProcessing() 调用:
+    // 1. 创建新大数据数组
+    // 2. 创建引用该数据的 interval
+    // 3. Interval 永远存活（永不清除）
+    // 4. 所有数据数组累积
 ```
 
-### Architectural Solution
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: Self-clearing timer with counter
+// 解决方案 1: 带计数器的自动清除定时器
 function startProcessing(maxIterations = 100) {
     let count = 0;
     
     const interval = setInterval(() => {
-        const data = loadLargeData();  // Fresh each iteration
+        const data = loadLargeData();  // 每次迭代新鲜
         processData(data);
         
         if (++count >= maxIterations) {
-            clearInterval(interval);  // Auto-cleanup
+            clearInterval(interval);  // 自动清理
         }
     }, 1000);
     
-    return interval;  // Caller responsible for cleanup
+    return interval;  // 调用者负责清理
 }
 
-// SOLUTION 2: Use WeakRef for cached data
+// 解决方案 2: 使用 WeakRef 缓存数据
 function startProcessing() {
     const cacheRef = new WeakRef(new Map());
     
     return setInterval(() => {
         const cache = cacheRef.deref();
         if (!cache) {
-            // Cache was GC'd, recreate
+            // Cache 被 GC 了，重新创建
             cacheRef = new WeakRef(new Map());
         }
-        // Work with potentially-gone cache
+        // 使用可能已消失的缓存
     }, 1000);
 }
 
-// SOLUTION 3: Singleton pattern for shared resources
+// 解决方案 3: 单例模式共享资源
 class ProcessingService {
     static #instance = null;
     #interval = null;
@@ -349,47 +349,47 @@ class ProcessingService {
 }
 ```
 
-## Pattern 5: Unbounded Cache Growth
+## 模式 5：无界缓存增长
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-Maps and Sets in JavaScript have no eviction semantics. A `Map` used as a cache grows indefinitely because every entry is **strongly reachable**.
+JavaScript 中的 Map 和 Set 没有驱逐语义。作为缓存使用的 `Map` 无限增长，因为每个条目都是**强可达的**。
 
 ```
-ARCHITECTURE: Cache as GC retention problem
+架构: 缓存作为 GC 保留问题
 
-Cache entry lifecycle:
-1. cache.set(key, value) → entry added
-2. Entry is strongly reachable via Map's internal storage
-3. No automatic removal
-4. Value stays alive as long as key is in Map
+缓存条目生命周期:
+1. cache.set(key, value) → 条目添加
+2. 条目通过 Map 内部存储强可达
+3. 无自动移除
+4. 只要 key 在 Map 中，value 就保持存活
 
-If cache grows forever → Old Space grows forever → OOM
+如果缓存永远增长 → Old Space 永远增长 → OOM
 ```
 
-### The Hidden Cost of Caching
+### 缓存的隐藏代价
 
 ```javascript
-// BAD: Cache without eviction
+// 坏: 没有驱逐的缓存
 const cache = new Map();
 
 function getUser(id) {
     if (!cache.has(id)) {
-        cache.set(id, loadUserFromDB(id));  // Each user stays forever
+        cache.set(id, loadUserFromDB(id));  // 每个用户永远存活
     }
     return cache.get(id);
 }
 
-// After 1 million requests:
-// - 1 million User objects in Old Space
-// - All survive every Major GC
-// - Memory grows monotonically
+// 100 万请求后:
+// - Old Space 中有 100 万个 User 对象
+// - 所有对象在每次 Major GC 中存活
+// - 内存单调增长
 ```
 
-### Architectural Solutions
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: LRU Cache (bounded by design)
+// 解决方案 1: LRU 缓存（由设计限制）
 class LRUCache {
     #maxSize;
     #map = new Map();
@@ -401,7 +401,7 @@ class LRUCache {
     get(key) {
         if (!this.#map.has(key)) return undefined;
         
-        // Move to end (most recently used)
+        // 移到末尾（最近使用）
         const value = this.#map.get(key);
         this.#map.delete(key);
         this.#map.set(key, value);
@@ -412,7 +412,7 @@ class LRUCache {
         if (this.#map.has(key)) {
             this.#map.delete(key);
         } else if (this.#map.size >= this.#maxSize) {
-            // Remove least recently used (first item)
+            // 移除最少使用的（第一个条目）
             const firstKey = this.#map.keys().next().value;
             this.#map.delete(firstKey);
         }
@@ -420,7 +420,7 @@ class LRUCache {
     }
 }
 
-// SOLUTION 2: TTL-based expiration
+// 解决方案 2: 基于 TTL 的过期
 class TTLCache {
     #ttl;
     #cache = new Map();
@@ -448,8 +448,8 @@ class TTLCache {
     }
 }
 
-// SOLUTION 3: WeakMap for object-keyed caches
-const objectCache = new WeakMap();  // Values GC'd when keys are GC'd
+// 解决方案 3: 用于对象键缓存的 WeakMap
+const objectCache = new WeakMap();  // 键被 GC 时值也被 GC
 
 function processObject(obj) {
     if (!objectCache.has(obj)) {
@@ -457,45 +457,45 @@ function processObject(obj) {
     }
     return objectCache.get(obj);
 }
-// obj must be manually dereferenced to release cached value
+// obj 必须手动解引用以释放缓存值
 ```
 
-## Pattern 6: Promise Chain Retention
+## 模式 6：Promise 链保留
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-Promises create implicit reference chains. A pending promise holds references to:
-1. Its `then` callbacks (closure scope)
-2. Variables captured by those callbacks
-3. The rejection handlers
+Promise 创建隐式引用链。待处理的 promise 持有以下引用：
+1. 它的 `then` 回调（闭包作用域）
+2. 这些回调捕获的变量
+3. 拒绝处理器
 
 ```javascript
-// ARCHITECTURE: Promise retention model
+// 架构: Promise 保留模型
 async function process(data) {
-    const context = createHeavyContext(data);  // Large object
+    const context = createHeavyContext(data);  // 大对象
     
     return fetch(url)
         .then(response => {
             return processWithContext(context, response);
         })
         .catch(error => {
-            // This closure also captures context
+            // 这个闭包也捕获 context
             handleError(context, error);
         });
 }
 
-// Promise chain lifecycle:
-// 1. async function returns Promise (chain starts)
-// 2. fetch() promise created
-// 3. .then() creates intermediate promise
-// 4. .catch() creates another promise
-// 5. ALL closures captured until chain resolves/rejects
+// Promise 链生命周期:
+    // 1. async 函数返回 Promise（链开始）
+    // 2. fetch() promise 创建
+    // 3. .then() 创建中间 promise
+    // 4. .catch() 创建另一个 promise
+    // 5. 所有闭包被捕获直到链解决/拒绝
 ```
 
-### Cleanup vs. Retention
+### 清理 vs 保留
 
 ```javascript
-// PROBLEM: Promise chain keeps context alive
+// 问题: Promise 链保持 context 存活
 async function processWithRetry(data, maxRetries = 3) {
     const context = new LargeContext(data);  // 50MB
     
@@ -505,31 +505,31 @@ async function processWithRetry(data, maxRetries = 3) {
                 .then(r => r.json())
                 .then(result => processResult(context, result));
         } catch (e) {
-            // Retry: context stays alive across iterations
+            // 重试: context 在迭代间保持存活
         }
     }
     
-    // Context lives through entire retry loop
-    // Only released after final attempt or success
+    // Context 存活整个重试循环
+    // 仅在最终尝试或成功后释放
 }
 ```
 
-### Architectural Solutions
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: Explicit nulling after use
+// 解决方案 1: 使用后显式置空
 async function process(data) {
     const context = createHeavyContext(data);
     try {
         const result = await fetch(url).then(r => r.json());
         return processResult(context, result);
     } finally {
-        // Explicit release after await completes
+        // await 完成后显式释放
         context = null;
     }
 }
 
-// SOLUTION 2: Structured error handling (avoid catch chains)
+// 解决方案 2: 结构化错误处理（避免 catch 链）
 async function process(data) {
     const context = createHeavyContext(data);
     let result;
@@ -542,11 +542,11 @@ async function process(data) {
         throw error;
     }
     
-    context.cleanup();  // Explicit cleanup
+    context.cleanup();  // 显式清理
     return processResult(context, result);
 }
 
-// SOLUTION 3: AbortController with timeout
+// 解决方案 3: 带超时的 AbortController
 async function process(data, timeoutMs = 5000) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -556,52 +556,52 @@ async function process(data, timeoutMs = 5000) {
         return await response.json();
     } finally {
         clearTimeout(timeout);
-        // Context auto-released if fetch was aborted
+        // 如果 fetch 被中止，context 自动释放
     }
 }
 ```
 
-## Pattern 7: Native Module References
+## 模式 7：原生模块引用
 
-### Why It Happens (Architecture)
+### 为什么发生（架构）
 
-Addons (native modules) use `node-gyp` and interact with V8's heap via **external resources**. V8 doesn't manage these directly—they're held by the native code.
+Addon（原生模块）使用 `node-gyp`，通过**外部资源**与 V8 堆交互。V8 不直接管理这些——它们由原生代码持有。
 
 ```javascript
-// ARCHITECTURE: External resource management
+// 架构: 外部资源管理
 const addon = require('./native-addon');
 
-// External resources:
-addon.createBuffer(1024 * 1024);  // C++ heap, not V8 heap
+// 外部资源:
+addon.createBuffer(1024 * 1024);  // C++ 堆，非 V8 堆
     │
     └── Tracked by: addon._exernalMemory
             │
             └── Increases process.memoryUsage().external
-            └── NOT collected by V8 GC
+            └── 不被 V8 GC 回收
 ```
 
-### Buffer Retention in Addons
+### Addon 中的缓冲区保留
 
 ```javascript
-// Typical leak pattern in addons
+// addons 中的典型泄漏模式
 class NativeProcessor {
     #buffers = [];
     
     process(data) {
-        // Buffer created in C++, stored in JS array
+        // 在 C++ 中创建的缓冲区，存储在 JS 数组中
         const buffer = this.#native.createBuffer(data);
-        this.#buffers.push(buffer);  // Explicit retention
+        this.#buffers.push(buffer);  // 显式保留
         
-        // Even if buffer is freed in C++,
-        // JS array entry keeps it alive in V8 heap
+        // 即使在 C++ 中释放了缓冲区，
+        // JS 数组条目仍使其在 V8 堆中保持存活
     }
 }
 ```
 
-### Architectural Solutions
+### 架构解决方案
 
 ```javascript
-// SOLUTION 1: Track and release explicitly
+// 解决方案 1: 显式追踪和释放
 class NativeProcessor {
     #buffers = [];
     #native;
@@ -614,7 +614,7 @@ class NativeProcessor {
         const buffer = this.#native.createBuffer(data);
         this.#buffers.push(buffer);
         
-        // Return cleanup function
+        // 返回清理函数
         return () => {
             this.#native.releaseBuffer(buffer);
             const idx = this.#buffers.indexOf(buffer);
@@ -623,7 +623,7 @@ class NativeProcessor {
     }
     
     destroy() {
-        // Release all buffers
+        // 释放所有缓冲区
         for (const buffer of this.#buffers) {
             this.#native.releaseBuffer(buffer);
         }
@@ -631,7 +631,7 @@ class NativeProcessor {
     }
 }
 
-// SOLUTION 2: Monitor external memory
+// 解决方案 2: 监控外部内存
 setInterval(() => {
     const { heapUsed, heapTotal, external } = process.memoryUsage();
     
@@ -639,17 +639,17 @@ setInterval(() => {
     
     if (externalRatio > 0.5) {
         console.error('External memory > 50% of total. Potential addon leak.');
-        // Trigger cleanup or alert
+        // 触发清理或告警
     }
 }, 10000);
 ```
 
-## Diagnostic Architecture
+## 诊断架构
 
-### Heap Snapshot Analysis
+### 堆快照分析
 
 ```javascript
-// Architecture: Snapshot captures reference graph at point in time
+// 架构: 快照在时间点捕获引用图
 const v8 = require('v8');
 const fs = require('fs');
 
@@ -659,15 +659,15 @@ function captureSnapshot(filename = 'heap.heapsnapshot') {
     return filepath;
 }
 
-// Key insight: Compare snapshots over time
-// Leaked objects appear in later snapshots but not earlier
-// Retained size shows WHY objects are kept (path to GC root)
+// 关键洞察: 随着时间比较快照
+// 泄漏的对象在后面的快照中出现但前面的没有
+// 保留大小显示对象为什么被保留（到 GC 根的路径）
 ```
 
-### Memory Growth Pattern Recognition
+### 内存增长模式识别
 
 ```javascript
-// Architecture: Identify leak by growth pattern
+// 架构: 通过增长模式识别泄漏
 const v8 = require('v8');
 
 class MemoryMonitor {
@@ -706,7 +706,7 @@ class MemoryMonitor {
     }
 }
 
-// Usage
+// 使用
 const monitor = new MemoryMonitor();
 monitor.start();
 
@@ -717,21 +717,21 @@ setTimeout(() => {
 }, 60000);
 ```
 
-### Leak Indicators by GC Phase
+### GC 阶段泄漏指标
 
-| Indicator | Likely Cause | GC Phase Affected |
-|-----------|-------------|-------------------|
-| `heapUsed` monotonic growth | Unbounded retention | Both |
-| Growth stops after Major GC | Young space promotion issue | Minor GC |
-| No growth plateau | Global leak (roots) | Major GC |
-| `external` increasing | Native addon retention | N/A |
+| 指标 | 可能原因 | 受影响的 GC 阶段 |
+|------|---------|-----------------|
+| `heapUsed` 单调增长 | 无界保留 | 两者 |
+| Major GC 后增长停止 | 年轻空间提升问题 | Minor GC |
+| 无增长平台期 | 全局泄漏（根） | Major GC |
+| `external` 增加 | 原生 addon 保留 | N/A |
 
-## Architectural Prevention Framework
+## 架构预防框架
 
-### Design for Explicit Lifecycle
+### 显式生命周期设计
 
 ```javascript
-// Every object should have clear ownership
+// 每个对象应该有明确的所属权
 class ResourceOwner {
     #resources = new Set();
     #orphaned = new FinalizationRegistry(name => {
@@ -763,10 +763,10 @@ class ResourceOwner {
 }
 ```
 
-### Memory Budgeting
+### 内存预算
 
 ```javascript
-// Architecture: Budget-driven resource management
+// 架构: 预算驱动的资源管理
 class MemoryBudget {
     #limit;
     #used = 0;
@@ -803,36 +803,36 @@ class MemoryBudget {
 }
 ```
 
-## Leak Prevention Checklist
+## 泄漏预防清单
 
-### Architecture Review Questions
+### 架构审查问题
 
-- [ ] **Scope Anchoring**: Are objects attached to global/module scope only when truly global?
-- [ ] **Closure hygiene**: Do closures capture only what's necessary?
-- [ ] **Event lifecycle**: Are listeners removed when their source is destroyed?
-- [ ] **Timer discipline**: Are all timers cleared in cleanup paths?
-- [ ] **Cache bounds**: Do caches have eviction policies?
-- [ ] **Promise awareness**: Do promise chains hold references past their usefulness?
-- [ ] **Native cleanup**: Do addon resources have explicit release methods?
-- [ ] **Memory budgets**: Are there limits on in-memory structures?
+- [ ] **作用域锚定**: 对象只有在真正是全局的才附加到全局/模块作用域？
+- [ ] **闭包卫生**: 闭包是否只捕获必要的内容？
+- [ ] **事件生命周期**: 监听器在其源被销毁时是否被移除？
+- [ ] **定时器纪律**: 所有定时器是否在清理路径中被清除？
+- [ ] **缓存界限**: 缓存是否有驱逐策略？
+- [ ] **Promise 意识**: Promise 链是否在其有用性之后保持引用？
+- [ ] **原生清理**: addon 资源是否有显式释放方法？
+- [ ] **内存预算**: 内存结构是否有限制？
 
-### Code Review Signals
+### 代码审查信号
 
 ```javascript
-// RED FLAGS (architectural debt):
-new Array()           // No size limit
-new Map()              // No eviction
-.push() in loop        // Potential accumulation
-setInterval without    // No clear cleanup path
+// 红旗（架构债务）:
+new Array()           // 无大小限制
+new Map()              // 无驱逐
+.push() in loop        // 潜在累积
+setInterval without    // 无明确清理路径
   clearInterval
-.on() without .off()   // Listener accumulation
-global variable        // Permanent retention
-new Promise() stored   // Chain retained indefinitely
+.on() without .off()   // 监听器累积
+global variable        // 永久保留
+new Promise() stored   // 链无限期保留
 ```
 
-## Related
+## 相关
 
-- [Heapdump Analysis](./heapdump-analysis.md) - Debugging techniques
-- [V8 Heap Structure](./v8-heap-structure.md) - Architectural foundation
-- [Scavenge Algorithm](./scavenge-algorithm.md) - Minor GC behavior
-- [Mark-Sweep-Compact](./mark-sweep-compact.md) - Major GC behavior
+- [Heapdump 分析](./heapdump-analysis.md) - 调试技术
+- [V8 堆结构](./v8-heap-structure.md) - 架构基础
+- [Scavenge 算法](./scavenge-algorithm.md) - Minor GC 行为
+- [Mark-Sweep-Compact](./mark-sweep-compact.md) - Major GC 行为

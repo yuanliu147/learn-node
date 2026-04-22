@@ -1,56 +1,56 @@
-# io_uring in libuv
+# libuv 中的 io_uring
 
-io_uring is Linux's high-performance async I/O interface, available in libuv as an optional backend.
+io_uring 是 Linux 的高性能异步 I/O 接口，在 libuv 中作为可选后端提供。
 
-## Overview
+## 概述
 
-io_uring provides:
-- **Zero-copy operations** via shared ring buffers
-- **Submission queue (SQ)** for sending requests
-- **Completion queue (CQ)** for receiving results
-- **Polled mode** for lowest latency
+io_uring 提供：
+- 通过共享环形缓冲区的**零拷贝操作**
+- **提交队列（SQ）**用于发送请求
+- **完成队列（CQ）**用于接收结果
+- **轮询模式**实现最低延迟
 
-## libuv Backend Selection
+## libuv 后端选择
 
 ```bash
-# Force io_uring backend
+# 强制使用 io_uring 后端
 UV_USE_IO_URING=1 ./your_app
 
-# Or programmatically (libuv 1.46+)
+# 或以编程方式（libuv 1.46+）
 uv_loop_configure(loop, UV_LOOP_BACKEND_IORING);
 ```
 
-## Enabling io_uring
+## 启用 io_uring
 
 ```c
-// Check if io_uring is available
+// 检查 io_uring 是否可用
 int available;
 uv_backend_fd(loop, &available);
-uv_loop_configure(loop, UV_LOOP_BACKEND_IORING);  // May fail if not available
+uv_loop_configure(loop, UV_LOOP_BACKEND_IORING);  // 如果不可用可能会失败
 ```
 
-## File Operations with io_uring
+## 使用 io_uring 的文件操作
 
 ```c
-// Open file
+// 打开文件
 uv_fs_t open_req;
 uv_fs_open(loop, &open_req, "file.txt", O_RDONLY, 0, callback);
 
-// Read file
+// 读取文件
 uv_buf_t bufs[1];
 bufs[0] = uv_buf_init(buffer, sizeof(buffer));
 uv_fs_read(loop, &read_req, open_req.result, bufs, 1, -1, callback);
 
-// Write file  
+// 写入文件  
 uv_fs_write(loop, &write_req, fd, bufs, 1, -1, callback);
 ```
 
-## io_uring Specific Features
+## io_uring 特定功能
 
-### Ring Buffer Setup
+### 环形缓冲区设置
 
 ```
-User Space                    Kernel
+用户空间                    内核
 +-----------+                +-----------+
 |   SQ      | ----submit---> |   SQ      |
 +-----------+                +-----------+
@@ -58,49 +58,49 @@ User Space                    Kernel
 +-----------+                +-----------+
 ```
 
-### Polled I/O Mode
+### 轮询 I/O 模式
 
 ```c
-// Enable kernel-side polling (reduces syscalls)
+// 启用内核侧轮询（减少系统调用）
 uv_loop_configure(loop, UV_LOOP_BACKEND_IORING_POLL);
 ```
 
-## Performance Benefits
+## 性能优势
 
-| Aspect | epoll | io_uring |
-|--------|-------|----------|
-| Syscalls per operation | 2+ | 1 (batch) |
-| Memory copies | Multiple | Shared memory |
-| Features | Events only | Events + data |
-| Kernel poll support | No | Yes |
+| 方面 | epoll | io_uring |
+|------|-------|----------|
+| 每次操作的系统调用 | 2+ | 1（批量） |
+| 内存拷贝 | 多次 | 共享内存 |
+| 功能 | 仅事件 | 事件 + 数据 |
+| 内核轮询支持 | 否 | 是 |
 
-## Limitations
+## 限制
 
-- **Linux 5.1+** required (5.6+ for full features)
-- Not available on non-Linux systems
-- Falls back to epoll if unavailable
-- Some operations still require thread pool
+- 需要 **Linux 5.1+**（完整功能需要 5.6+）
+- 在非 Linux 系统上不可用
+- 如果不可用则回退到 epoll
+- 某些操作仍需要线程池
 
-## Current libuv Support (as of 1.46+)
+## 当前 libuv 支持（截至 1.46+）
 
 ```c
-// Operations supported natively via io_uring:
-// - File I/O: open, close, read, write, stat, etc.
-// - Socket I/O: still uses epoll for network events
+// 通过 io_uring 原生支持的操作：
+// - 文件 I/O：open, close, read, write, stat 等
+// - 套接字 I/O：仍使用 epoll 处理网络事件
 
-// Operations that still use threadpool:
-// - DNS lookups (getaddrinfo)
-// - FS operations on some configurations
+// 仍使用线程池的操作：
+// - DNS 查找（getaddrinfo）
+// - 某些配置下的 FS 操作
 ```
 
-## Practical Usage
+## 实际使用
 
 ```c
 int main() {
     uv_loop_t* loop = uv_loop_new();
     
-    // Let libuv choose best backend
-    // io_uring will be used automatically on supported systems
+    // 让 libuv 选择最佳后端
+    // 在支持的系统上会自动使用 io_uring
     
     uv_fs_open(loop, &req, "test.txt", O_RDONLY, 0, on_open);
     
@@ -109,12 +109,12 @@ int main() {
 }
 ```
 
-## Error Handling
+## 错误处理
 
 ```c
 void callback(uv_fs_t* req) {
     if (req->result < 0) {
-        // io_uring errors are negative errno values
+        // io_uring 错误是负的 errno 值
         fprintf(stderr, "io_uring error: %s\n", uv_strerror(req->result));
     }
 }

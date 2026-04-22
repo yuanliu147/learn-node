@@ -1,17 +1,17 @@
-# Token & Rate Limit Management
+# Token 与限流管理
 
-## Overview
+## 概述
 
-LLM APIs impose limits at multiple levels - requests per minute, tokens per minute, and concurrent connections. Effective management of these limits is critical for production AI applications.
+LLM API 在多个层面施加限制 —— 每分钟请求数（RPM）、每分钟 token 数（TPM）和并发连接数。有效地管理这些限制对生产级 AI 应用至关重要。
 
-## Rate Limit Structure
+## 限流结构
 
 ```typescript
 interface RateLimitConfig {
-  rpm: number;           // Requests per minute
-  tpm: number;           // Tokens per minute  
-  maxConcurrent: number; // Simultaneous connections
-  cooldownMs: number;    // Wait time on 429
+  rpm: number;           // 每分钟请求数
+  tpm: number;           // 每分钟 token 数  
+  maxConcurrent: number; // 同时连接数
+  cooldownMs: number;    // 收到 429 后的等待时间
 }
 
 interface RateLimitStatus {
@@ -21,32 +21,32 @@ interface RateLimitStatus {
 }
 ```
 
-## Token Counting
+## Token 计数
 
-### Prompt Token Estimation
+### Prompt Token 估算
 
 ```typescript
 class TokenCounter {
-  // Approximate token count using word-based estimation
+  // 使用基于词的估算来近似 token 数
   static estimate(text: string): number {
-    // Rough approximation: ~0.75 tokens per word for English
+    // 粗略估算：英文约每词 0.75 个 token
     const words = text.trim().split(/\s+/).length;
     return Math.ceil(words / 0.75);
   }
   
-  // More accurate with tiktoken-like encoding
+  // 使用类 tiktoken 编码更精确
   static async countOpenAI(text: string, model = 'gpt-4'): Promise<number> {
-    const encoder = await getEncoder('cl100k_base'); // OpenAI's encoding
+    const encoder = await getEncoder('cl100k_base'); // OpenAI 的编码
     return encoder.encode(text).length;
   }
   
-  // Count prompt with message formatting
+  // 计算带消息格式的 prompt
   static async countMessages(messages: Message[], model: string): Promise<number> {
     const encoded = await Promise.all(
       messages.map(m => this.countOpenAI(m.content, model))
     );
     
-    // Add overhead per message (~4 tokens)
+    // 每条消息约 4 tokens 的开销
     return encoded.reduce((sum, count) => sum + count + 4, 0);
   }
 }
@@ -57,7 +57,7 @@ interface Message {
 }
 ```
 
-### Token Budget Management
+### Token 预算管理
 
 ```typescript
 class TokenBudget {
@@ -103,7 +103,7 @@ class TokenBudget {
 }
 ```
 
-## Response Tracking
+## 响应追踪
 
 ```typescript
 class TokenTracker {
@@ -131,14 +131,14 @@ class TokenTracker {
     };
   }
   
-  // Aggregate usage over time window
+  // 聚合时间窗口内的使用量
   getAggregateUsage(windowMs: number = 60000): TokenUsage {
     const cutoff = Date.now() - windowMs;
     let prompt = 0;
     let completion = 0;
     
     for (const [id, tokens] of this.requestTokens) {
-      // Track timestamps separately
+      // 单独追踪时间戳
       const timestamp = this.timestamps.get(id);
       if (timestamp && timestamp > cutoff) {
         prompt += tokens;
@@ -157,7 +157,7 @@ class TokenTracker {
 }
 ```
 
-## Provider-Specific Limits
+## 各提供商限制
 
 ```typescript
 const PROVIDER_LIMITS = {
@@ -193,11 +193,11 @@ function getLimits(provider: string, model: string): RateLimitConfig {
 }
 ```
 
-## Response Header Parsing
+## 响应头解析
 
 ```typescript
 class RateLimitParser {
-  // Parse rate limit headers from OpenAI
+  // 解析 OpenAI 的限流头
   static parseOpenAI(response: Response): RateLimitStatus {
     const headers = {
       'x-ratelimit-limit-requests': response.headers.get('x-ratelimit-limit-requests'),
@@ -218,7 +218,7 @@ class RateLimitParser {
     };
   }
   
-  // Parse Anthropic rate limit headers
+  // 解析 Anthropic 的限流头
   static parseAnthropic(response: Response): RateLimitStatus {
     const headers = {
       'anthropic-ratelimit-requests-limit': response.headers.get('anthropic-ratelimit-requests-limit'),
@@ -230,7 +230,7 @@ class RateLimitParser {
       available: parseInt(headers['anthropic-ratelimit-requests-remaining']) > 0,
       remaining: {
         rpm: parseInt(headers['anthropic-ratelimit-requests-remaining']),
-        tpm: 0 // Anthropic doesn't expose TPM in headers
+        tpm: 0 // Anthropic 未在头中暴露 TPM
       },
       resetAt: new Date(parseInt(headers['anthropic-ratelimit-requests-reset']))
     };
@@ -239,14 +239,14 @@ class RateLimitParser {
 
 function parseResetTime(reset: string | null): number {
   if (!reset) return 60000;
-  // Format: "2024-01-01T00:01:00Z" or "1000ms" or "60s"
+  // 格式："2024-01-01T00:01:00Z" 或 "1000ms" 或 "60s"
   if (reset.endsWith('ms')) return parseInt(reset);
   if (reset.endsWith('s')) return parseInt(reset) * 1000;
   return new Date(reset).getTime() - Date.now();
 }
 ```
 
-## Circuit Breaker
+## 熔断器
 
 ```typescript
 class CircuitBreaker {
@@ -298,7 +298,7 @@ class CircuitBreaker {
 }
 ```
 
-## Budget Alerts
+## 预算告警
 
 ```typescript
 class BudgetAlertManager {
@@ -322,30 +322,30 @@ class BudgetAlertManager {
   }
 }
 
-// Usage
+// 使用示例
 const alerts = new BudgetAlertManager();
 
 alerts.onThreshold(0.5, (usage) => {
-  console.warn(`⚠️ 50% budget used: ${usage.totalTokens} tokens`);
+  console.warn(`⚠️ 已使用 50% 预算: ${usage.totalTokens} tokens`);
   notifyOperations();
 });
 
 alerts.onThreshold(0.8, (usage) => {
-  console.error(`🚨 80% budget used: ${usage.totalTokens} tokens`);
+  console.error(`🚨 已使用 80% 预算: ${usage.totalTokens} tokens`);
   scaleDown();
 });
 
 alerts.onThreshold(0.95, (usage) => {
-  console.critical(`🛑 95% budget used: ${usage.totalTokens} tokens`);
+  console.critical(`🛑 已使用 95% 预算: ${usage.totalTokens} tokens`);
   emergencyShutdown();
 });
 ```
 
-## Summary
+## 总结
 
-Token and rate limit management involves:
-1. **Accurate counting**: Token estimation and encoding-based counting
-2. **Budget tracking**: Time-windowed token spending
-3. **Header parsing**: Extracting limit info from provider responses
-4. **Circuit breakers**: Preventing cascade failures
-5. **Alert systems**: Proactive budget monitoring
+Token 和限流管理涉及：
+1. **精确计数**：Token 估算和基于编码的计数
+2. **预算追踪**：基于时间窗口的 token 消费
+3. **响应头解析**：从提供商响应中提取限制信息
+4. **熔断器**：防止级联故障
+5. **告警系统**：主动预算监控

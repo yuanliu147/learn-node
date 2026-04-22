@@ -1,8 +1,8 @@
-# Backpressure Mechanism in Node.js Streams
+# Node.js Stream 中的背压机制
 
-> **Architecture Perspective**: Backpressure is a **flow control contract** between producers and consumers. It prevents cascading failures by making slow consumers visible to fast producers, turning an implicit problem into an explicit, handleable signal.
+> **架构视角**：背压是生产者和消费者之间的**流量控制契约**。它通过使慢消费者对快生产者可见来防止级联故障，将隐式问题转换为可处理的显式信号。
 
-## The Core Problem: Producer-Consumer Velocity Mismatch
+## 核心问题：生产者-消费者速度不匹配
 
 ```
 ┌─────────────┐    speed A     ┌─────────────┐    speed B     ┌─────────────┐
@@ -12,45 +12,45 @@
        A >> B  →  buffer accumulation  →  memory growth  →  OOM or crash
 ```
 
-When `speed(producer) >> speed(consumer)`:
-- Memory grows unbounded (buffers accumulate)
-- GC pressure increases
-- Latency spikes
-- Eventually: service degradation or crash
+当 `speed(producer) >> speed(consumer)` 时：
+- 内存无限增长（缓冲区累积）
+- GC 压力增加
+- 延迟飙升
+- 最终：服务降级或崩溃
 
-**Backpressure makes this mismatch explicit and survivable.**
+**背压机制使这种不匹配变得显式且可存活。**
 
-## The Architectural Contract
+## 架构契约
 
-Every Writable stream exposes a binary contract via `write()`:
+每个 Writable 流通过 `write()` 暴露一个二元契约：
 
 ```javascript
 const canContinue = writable.write(chunk);
-// true  → producer may continue (buffer has capacity)
-// false → producer MUST pause (backpressure signal)
+// true  → 生产者可以继续（缓冲区有容量）
+// false → 生产者必须暂停（背压信号）
 ```
 
-This is a **flow control protocol**, not just an optimization.
+这是一个**流量控制协议**，而不仅仅是优化。
 
-### highWaterMark: The Buffer Capacity Budget
+### highWaterMark：缓冲区容量预算
 
-| Stream Type      | Default `highWaterMark` | Rationale |
-|------------------|--------------------------|-----------|
-| Readable         | 16KB                     | Balance memory vs. throughput |
-| Writable         | 16KB                     | Same |
-| File (fs)        | 64KB                     | Disk I/O is slower; larger buffers amortize syscall overhead |
-| objectMode       | 16 (count, not bytes)    | Objects are heavier |
+| Stream 类型      | 默认 `highWaterMark` | 原因 |
+|------------------|--------------------------|------|
+| Readable         | 16KB                     | 平衡内存与吞吐量 |
+| Writable         | 16KB                     | 相同 |
+| File (fs)        | 64KB                     | 磁盘 I/O 较慢；更大的缓冲区分摊系统调用开销 |
+| objectMode       | 16 (计数，非字节)          | 对象更重 |
 
 ```javascript
-// Tuning for high-throughput scenarios
+// 高吞吐量场景调优
 const stream = createReadStream(file, { highWaterMark: 128 * 1024 });
-// Larger buffer → fewer `write()` calls → lower CPU overhead
-// Cost: more memory per stream
+// 更大的缓冲区 → 更少的 `write()` 调用 → 更低的 CPU 开销
+// 代价：每个流占用更多内存
 ```
 
-**Trade-off**: `highWaterMark` is a memory-vs-throughput dial. Higher = better throughput, worse memory spike on slow consumers.
+**权衡**：`highWaterMark` 是内存-吞吐量调节旋钮。更高 = 更好的吞吐量，慢消费者时更差的内存峰值。
 
-## The Drain Cycle: Explicit Flow Control State Machine
+## Drain 周期：显式流量控制状态机
 
 ```
        readable.on('data')
@@ -81,11 +81,11 @@ const stream = createReadStream(file, { highWaterMark: 128 * 1024 });
     └──────────────────┘
 ```
 
-**Key invariant**: Between `pause()` and `drain`, zero new data is read. Memory is capped at `highWaterMark`.
+**关键不变量**：在 `pause()` 和 `drain` 之间，不会读取新数据。内存被限制在 `highWaterMark`。
 
-## Implementation: Manual vs. Automatic
+## 实现：手动 vs 自动
 
-### Manual Implementation (Explicit Contract)
+### 手动实现（显式契约）
 
 ```javascript
 const readable = getReadableSource();
@@ -95,27 +95,27 @@ readable.on('data', (chunk) => {
   const canContinue = writable.write(chunk);
 
   if (!canContinue) {
-    readable.pause();                    // Stop reading
+    readable.pause();                    // 停止读取
     writable.once('drain', () => {
-      readable.resume();                // Resume only after drain
+      readable.resume();                // 仅在 drain 后恢复
     });
   }
 });
 ```
 
-**Architecture decision**: Manual handling gives you control over the pause/resume logic. Use when you need custom buffering, metrics, or per-chunk processing before write.
+**架构决策**：手动处理让你控制暂停/恢复逻辑。当需要自定义缓冲、指标或写入前的逐块处理时使用。
 
-### pipe() — Automatic Backpressure
+### pipe() — 自动背压
 
 ```javascript
 readable.pipe(writable);
 ```
 
-`pipe()` **encapsulates the drain cycle internally**. It is the declarative, correct default for simple point-to-point streaming.
+`pipe()` **在内部封装了 drain 周期**。对于简单的点对点流，它是声明式的、正确的默认选择。
 
-**When to use**: Single read→write pair where error handling is managed externally.
+**使用场景**：单个 read→write 对，且错误处理在外部管理。
 
-## Transform Chains: Backpressure Propagation
+## Transform 链：背压传播
 
 ```
 readable ──▶ transform1 ──▶ transform2 ──▶ writable
@@ -123,23 +123,23 @@ readable ──▶ transform1 ──▶ transform2 ──▶ writable
             highWaterMark   highWaterMark
 ```
 
-Backpressure propagates **upstream** through the chain:
+背压通过链**向上游**传播：
 
-1. `writable` returns `false` from `write()`
-2. `transform2` receives `false` → its readable side pauses
-3. `transform1` receives backpressure → its readable side pauses
-4. `readable` pauses
+1. `writable` 从 `write()` 返回 `false`
+2. `transform2` 收到 `false` → 其 readable 端暂停
+3. `transform1` 收到背压 → 其 readable 端暂停
+4. `readable` 暂停
 
-**No data is lost. The chain self-regulates.**
+**没有数据丢失。链自我调节。**
 
 ```javascript
-// With pipe() - backpressure propagates automatically
+// 使用 pipe() - 背压自动传播
 readable
   .pipe(transform1)
   .pipe(transform2)
   .pipe(writable);
 
-// With pipeline() - same backpressure behavior, plus proper error handling
+// 使用 pipeline() - 相同的背压行为，加上正确的错误处理
 const { pipeline } = require('stream');
 pipeline(
   readable,
@@ -150,11 +150,11 @@ pipeline(
 );
 ```
 
-## Architectural Patterns
+## 架构模式
 
-### Pattern 1: Producer-Consumer Decoupling
+### 模式 1：生产者-消费者解耦
 
-Backpressure enables **asynchronous decoupling** between fast producers and slow consumers.
+背压实现了快生产者和慢消费者之间的**异步解耦**。
 
 ```
 Producer ────buffer───▶ Consumer
@@ -164,11 +164,11 @@ Without backpressure: coupled synchronous failure
 With backpressure: independent failure modes, bounded memory
 ```
 
-**Use case**: File uploads → disk writes, API responses → client writes.
+**使用场景**：文件上传 → 磁盘写入，API 响应 → 客户端写入。
 
-### Pattern 2: Service Mesh Backpressure
+### 模式 2：服务网格背压
 
-At the system level, backpressure prevents cascade failures:
+在系统级别，背压防止级联故障：
 
 ```
 Incoming requests
@@ -180,18 +180,18 @@ Incoming requests
 └──────────────┘                         └──────────────┘
 ```
 
-Node.js streams implement this contract at the I/O level — same pattern applies at service boundaries (TCP pressure, HTTP 429, connection pool exhaustion).
+Node.js streams 在 I/O 层面实现了这个契约 — 相同模式适用于服务边界（TCP pressure, HTTP 429, 连接池耗尽）。
 
-### Pattern 3: Bounded Processing with Overflow Handling
+### 模式 3：带溢出处理的有界处理
 
 ```javascript
-// Architecture: reject new work when buffer is full
-// (congestion control at application boundary)
+// 架构：缓冲区满时拒绝新工作
+// （应用边界处的拥塞控制）
 const MAX_BUFFER = 1000;
 
 readable.on('data', (chunk) => {
   if (buffer.length >= MAX_BUFFER) {
-    // Signal upstream to slow down
+    // 向上游发送减速信号
     readable.pause();
     setTimeout(() => checkOverflow(), 100);
   } else {
@@ -201,16 +201,16 @@ readable.on('data', (chunk) => {
 });
 ```
 
-## Diagnosing Backpressure in Production
+## 生产环境背压诊断
 
-| Signal | What It Indicates |
-|--------|-------------------|
-| `write()` returns `false` frequently | Downstream is bottlenecking |
-| Memory stable despite high throughput | Backpressure is working (bounded buffers) |
-| Memory growing + `write()` returning `false` | Backpressure NOT being respected |
-| High CPU on `drain` events | Large number of small writes → consider batching |
+| 信号 | 含义 |
+|------|------|
+| `write()` 频繁返回 `false` | 下游是瓶颈 |
+| 高吞吐量下内存稳定 | 背压正在工作（有界缓冲区） |
+| 内存增长 + `write()` 返回 `false` | 背压未被遵守 |
+| `drain` 事件上高 CPU | 大量小写入 → 考虑批处理 |
 
-**Monitoring**: Instrument `write()` return values in your stream handlers.
+**监控**：在你的流处理器中检测 `write()` 返回值。
 
 ```javascript
 let falseCount = 0;
@@ -221,17 +221,17 @@ readable.on('data', (chunk) => {
     writable.once('drain', () => readable.resume());
   }
 });
-// Alert if falseCount / totalWrites > threshold
+// 如果 falseCount / totalWrites > threshold 则告警
 ```
 
-## Decision Summary
+## 决策总结
 
-| Scenario | Approach |
-|----------|----------|
-| Simple file copy | `pipe()` |
-| Transform chain | `pipeline()` |
-| Custom buffering / metrics | Manual pause/drain |
-| Service-to-service streaming | Manual + circuit breaker |
-| Object streams | `objectMode: true` + object highWaterMark |
+| 场景 | 方法 |
+|------|------|
+| 简单文件复制 | `pipe()` |
+| Transform 链 | `pipeline()` |
+| 自定义缓冲/指标 | 手动 pause/drain |
+| 服务间流 | 手动 + 断路器 |
+| 对象流 | `objectMode: true` + 对象 highWaterMark |
 
-**Rule**: Always respect `write()`'s return value. Ignoring backpressure is a memory safety bug, not a performance optimization.
+**规则**：始终遵守 `write()` 的返回值。忽略背压是内存安全问题，而非性能优化。

@@ -1,6 +1,6 @@
 ---
-title: "Module Loading System in Node.js"
-description: "Deep dive into how Node.js resolves and loads modules using CommonJS and ES Modules"
+title: "Node.js 中的模块加载系统"
+description: "深入了解 Node.js 如何使用 CommonJS 和 ES Modules 解析和加载模块"
 tags:
   - Node.js
   - CommonJS
@@ -16,155 +16,155 @@ level: "intermediate"
 updated: "2025-01-15"
 ---
 
-# Module Loading System in Node.js
+# Node.js 中的模块加载系统
 
-## Overview
+## 概述
 
-Node.js employs a sophisticated module loading system that handles two primary module formats: **CommonJS (CJS)** and **ES Modules (ESM)**. Understanding how modules are resolved, cached, and loaded is essential for building efficient and maintainable Node.js applications.
+Node.js 采用复杂的模块加载系统，处理两种主要的模块格式：**CommonJS (CJS)** 和 **ES Modules (ESM)**。理解模块如何被解析、缓存和加载对于构建高效且可维护的 Node.js 应用至关重要。
 
-## CommonJS Module System
+## CommonJS 模块系统
 
-### How `require()` Works
+### `require()` 如何工作
 
-The CommonJS module system is the original module format in Node.js. When you call `require('module-name')`, Node.js performs a multi-step resolution process:
+CommonJS 模块系统是 Node.js 最初的模块格式。当你调用 `require('module-name')` 时，Node.js 执行多步解析过程：
 
 ```javascript
-// Loading a built-in module
+// 加载内置模块
 const fs = require('fs');
 
-// Loading a file module (relative path)
+// 加载文件模块（相对路径）
 const myModule = require('./myModule');
 
-// Loading from node_modules
+// 从 node_modules 加载
 const express = require('express');
 ```
 
-### Module Resolution Algorithm
+### 模块解析算法
 
-Node.js uses the following resolution order for `require(X)` from module at path Y:
+Node.js 对来自路径 Y 的模块使用 `require(X)` 的以下解析顺序：
 
-1. **Built-in modules** - Check if X is a Node.js built-in (fs, path, http, etc.)
-2. **File modules** - If X begins with `./` or `/` or `../`
-3. **node_modules** - Search in `node_modules` directories
+1. **内置模块** - 检查 X 是否为 Node.js 内置（fs、path、http 等）
+2. **文件模块** - 如果 X 以 `./` 或 `/` 或 `../` 开头
+3. **node_modules** - 在 `node_modules` 目录中搜索
 
-### The Resolution Process in Detail
+### 解析过程详解
 
 ```javascript
-// Suppose we have: require('./utils/helper')
-// Node.js will try:
+// 假设我们有：require('./utils/helper')
+// Node.js 将尝试：
 
 // 1. ./utils/helper.js
 // 2. ./utils/helper.json
-// 3. ./utils/helper.node (native addon)
-// 4. ./utils/helper/package.json (main field)
+// 3. ./utils/helper.node（原生插件）
+// 4. ./utils/helper/package.json（main 字段）
 // 5. ./utils/helper/index.js
 ```
 
-### Module Caching
+### 模块缓存
 
-Once a module is loaded, it's cached in `require.cache`. This means subsequent `require()` calls return the same object instance:
+一旦模块被加载，它会被缓存在 `require.cache` 中。这意味着后续的 `require()` 调用返回相同的对象实例：
 
 ```javascript
 const a = require('./module');
 const b = require('./module');
 
-console.log(a === b); // true - same object reference
+console.log(a === b); // true - 相同的对象引用
 
-// Clear cache for fresh load
+// 清除缓存以重新加载
 delete require.cache[require.resolve('./module')];
 ```
 
-### The `module` Object
+### `module` 对象
 
-Every CommonJS file has access to the `module` object:
+每个 CommonJS 文件都可以访问 `module` 对象：
 
 ```javascript
-console.log(module.id);        // Unique identifier for this module
-console.log(module.filename);  // Absolute path to this file
-console.log(module.loaded);    // Whether the module has finished loading
-console.log(module.children);  // Modules required by this one
-console.log(module.parent);    // Module that required this one
+console.log(module.id);        // 此模块的唯一标识符
+console.log(module.filename);  // 此文件的绝对路径
+console.log(module.loaded);    // 模块是否已完成加载
+console.log(module.children);  // 此模块 require 的模块
+console.log(module.parent);    // require 此模块的模块
 
-module.exports = { /* your exports */ };
-exports.helper = function() { /* shorthand */ };
+module.exports = { /* 你的导出 */ };
+exports.helper = function() { /* 简写 */ };
 ```
 
 ## ES Modules (ESM)
 
-### Using ESM in Node.js
+### 在 Node.js 中使用 ESM
 
-ES Modules require either:
-- File extension `.mjs`
-- `"type": "module"` in `package.json`
+ES Modules 需要：
+- 文件扩展名 `.mjs`
+- `package.json` 中的 `"type": "module"`
 
 ```javascript
-// With .mjs extension or "type": "module"
+// 使用 .mjs 扩展名或 "type": "module"
 import fs from 'fs';
 import { readFile } from 'fs/promises';
 import express from 'express';
 
-// Default import
+// 默认导入
 import React from 'react';
 
-// Named imports
+// 命名导入
 import { Component } from 'react';
 
-// Dynamic import (works in both CJS and ESM)
+// 动态导入（同时适用于 CJS 和 ESM）
 const module = await import('./module.js');
 ```
 
-### Key Differences from CommonJS
+### 与 CommonJS 的关键区别
 
-| Feature | CommonJS | ES Modules |
-|---------|----------|------------|
-| Syntax | `require()`, `module.exports` | `import`, `export` |
-| Loading | Synchronous | Asynchronous |
-| Resolution | Dynamic (runtime) | Static (compile-time) |
-| Cache | Mutable objects in `require.cache` | Immutable module records |
-| Hoisting | N/A | Imports hoisted to top |
-| `this` | `module` object | `undefined` at top level |
+| 特性 | CommonJS | ES Modules |
+|------|----------|------------|
+| 语法 | `require()`, `module.exports` | `import`, `export` |
+| 加载 | 同步 | 异步 |
+| 解析 | 动态（运行时） | 静态（编译时） |
+| 缓存 | `require.cache` 中的可变对象 | 不可变模块记录 |
+| 提升 | 不适用 | 导入提升到顶部 |
+| `this` | `module` 对象 | 顶层为 `undefined` |
 
 ### `import.meta`
 
-ESM provides `import.meta` with metadata about the current module:
+ESM 提供 `import.meta`，包含当前模块的元数据：
 
 ```javascript
-import.meta.url;        // URL of the current module file
-import.meta.resolve();  // Resolve a module specifier
-import.meta.main;       // Whether running as main module
+import.meta.url;        // 当前模块文件的 URL
+import.meta.resolve();  // 解析模块说明符
+import.meta.main;       // 是否作为主模块运行
 ```
 
-## Module Resolution Algorithm
+## 模块解析算法
 
-### Node.js Module Resolution (CommonJS)
+### Node.js 模块解析（CommonJS）
 
-The `require.resolve()` algorithm follows these steps:
+`require.resolve()` 算法遵循以下步骤：
 
 ```javascript
-// Step 1: Built-in modules
-// 'fs', 'path', 'http' - returned directly
+// 步骤 1：内置模块
+// 'fs', 'path', 'http' - 直接返回
 
-// Step 2: Relative paths (./, ../, /)
+// 步骤 2：相对路径（./, ../, /）
 // ./utils.js -> /path/to/project/utils.js
 // ../utils.js -> /path/to/utils.js
 
-// Step 3: Core modules in node_modules
-// Starting from parent directory, walk up:
+// 步骤 3：node_modules 中的核心模块
+// 从父目录开始向上遍历：
 // /path/to/project/node_modules/module
 // /path/to/node_modules/module
 // /node_modules/module
 ```
 
-### Package.json Fields
+### package.json 字段
 
-Node.js respects several `package.json` fields for module resolution:
+Node.js 尊重多个用于模块解析的 `package.json` 字段：
 
 ```json
 {
   "name": "my-package",
-  "main": "dist/index.js",           // CommonJS entry
-  "module": "dist/index.mjs",        // ESM entry (for bundlers)
-  "exports": {                       // Conditional exports (Node.js 12+)
+  "main": "dist/index.js",           // CommonJS 入口
+  "module": "dist/index.mjs",        // ESM 入口（用于打包工具）
+  "exports": {                       // 条件导出（Node.js 12+）
     ".": {
       "import": "./dist/index.mjs",
       "require": "./dist/index.js",
@@ -175,9 +175,9 @@ Node.js respects several `package.json` fields for module resolution:
 }
 ```
 
-### The `exports` Field (Conditional Exports)
+### `exports` 字段（条件导出）
 
-Conditional exports allow different entry points based on import method:
+条件导出允许基于导入方法的不同入口点：
 
 ```javascript
 // package.json
@@ -191,68 +191,68 @@ Conditional exports allow different entry points based on import method:
 }
 ```
 
-## Advanced Module Patterns
+## 高级模块模式
 
-### Circular Dependencies
+### 循环依赖
 
-Node.js handles circular dependencies, but with caveats:
+Node.js 处理循环依赖，但有注意事项：
 
 ```javascript
 // a.js
 const b = require('./b');
-console.log('A: loaded, b.value =', b.value);
+console.log('A: 已加载, b.value =', b.value);
 module.exports = { value: 'A' };
 
 // b.js
 const a = require('./a');
-console.log('B: loaded, a.value =', a.value);
+console.log('B: 已加载, a.value =', a.value);
 module.exports = { value: 'B' };
 
 // main.js
 require('./a');
-// Output:
-// B: loaded, a.value = undefined (a not yet exported)
-// A: loaded, b.value = B
+// 输出：
+// B: 已加载, a.value = undefined（a 尚未导出）
+// A: 已加载, b.value = B
 ```
 
-### Dynamic Imports
+### 动态导入
 
-Dynamic `import()` returns a Promise, useful for:
-- Code splitting
-- Conditional loading
-- Loading modules conditionally based on runtime conditions
+动态 `import()` 返回 Promise，适用于：
+- 代码分割
+- 条件加载
+- 基于运行时条件条件加载模块
 
 ```javascript
-// Dynamic import of an ES module
+// 动态导入 ES 模块
 const { default: express } = await import('express');
 
-// Conditional loading
+// 条件加载
 if (process.env.FEATURE_FLAG) {
   const analytics = await import('./analytics.js');
   analytics.track();
 }
 ```
 
-### Native Module Add-ons
+### 原生模块插件
 
-Node.js can load native add-ons (`.node` files):
+Node.js 可以加载原生插件（`.node` 文件）：
 
 ```javascript
-// Built-in native addon
+// 内置原生插件
 const binding = require('./build/Release/native addon.node');
 
-// Using node-gyp built modules
+// 使用 node-gyp 构建的模块
 const myModule = require('my-native-module');
 ```
 
-## Best Practices
+## 最佳实践
 
-1. **Use named exports for better IDE support** - Named imports provide better autocomplete
-2. **Avoid circular dependencies** - Restructure your code to prevent circular references
-3. **Use `exports` field in package.json** - Better than `main` for conditional exports
-4. **Prefer ES Modules for new packages** - But consider Node.js version requirements
-5. **Be mindful of module caching** - Changes require cache invalidation during development
+1. **使用命名导出以获得更好的 IDE 支持** - 命名导入提供更好的自动完成
+2. **避免循环依赖** - 重组代码以防止循环引用
+3. **在 package.json 中使用 `exports` 字段** - 比 `main` 更好地进行条件导出
+4. **新包优先使用 ES Modules** - 但要考虑 Node.js 版本要求
+5. **注意模块缓存** - 开发期间更改需要缓存失效
 
-## Summary
+## 总结
 
-Node.js's module loading system provides a powerful and flexible mechanism for code organization. Understanding the differences between CommonJS and ES Modules, the resolution algorithm, and caching behavior is crucial for writing efficient Node.js applications and libraries.
+Node.js 的模块加载系统为代码组织提供了强大而灵活的机制。理解 CommonJS 和 ES Modules 之间的区别、解析算法和缓存行为对于编写高效的 Node.js 应用和库至关重要。

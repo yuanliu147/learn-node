@@ -1,71 +1,71 @@
-# libuv Run Phases
+# libuv 运行阶段
 
-libuv operates through distinct phases when running an event loop, managing callbacks and I/O operations systematically.
+libuv 在运行事件循环时通过不同的阶段运行，系统地管理回调和 I/O 操作。
 
-## Phase Order
+## 阶段顺序
 
-The libuv event loop runs through these phases in order:
+libuv 事件循环按以下顺序运行这些阶段：
 
-1. **Timers** - Execute callbacks scheduled by `uv_timer_start()`
-2. **Pending** - Execute I/O callbacks that were deferred from the previous iteration
-3. **Idle** - Execute idle handles (platform-specific)
-4. **Prepare** - Execute prepare handles before polling for I/O
-5. **Poll** - Poll for new I/O events (kqueue/epoll/etc.)
-6. **Check** - Execute check handles immediately after polling
-7. **Closing** - Execute close callbacks for handles being closed
-8. **Ref** - Process referenced handles to keep loop alive
+1. **定时器** - 执行由 `uv_timer_start()` 调度的回调
+2. **待处理** - 执行从上一次迭代延迟的 I/O 回调
+3. **空闲** - 执行空闲句柄（平台特定）
+4. **准备** - 在轮询 I/O 之前执行准备句柄
+5. **轮询** - 轮询新的 I/O 事件（kqueue/epoll 等）
+6. **检查** - 轮询后立即执行检查句柄
+7. **关闭** - 执行正在关闭的句柄的关闭回调
+8. **引用** - 处理引用句柄以保持循环活动
 
-## uv_run() Modes
+## uv_run() 模式
 
 ```c
-// Three modes of running the event loop
+// 运行事件循环的三种模式
 uv_run(uv_loop_t* loop, uv_run_mode mode);
 
 typedef enum {
-    UV_RUN_DEFAULT,  // Run until all handles complete
-    UV_RUN_ONCE,     // Poll for I/O once, run callbacks
-    UV_RUN_NOWAIT    // Run callbacks without polling for I/O
+    UV_RUN_DEFAULT,  // 运行直到所有句柄完成
+    UV_RUN_ONCE,     // 轮询一次 I/O，运行回调
+    UV_RUN_NOWAIT    // 运行回调但不轮询 I/O
 } uv_run_mode;
 ```
 
-## Phase Details
+## 阶段详情
 
-### Timers Phase
-- Sorted priority queue of timer callbacks
-- Executes all timers whose deadline has passed
+### 定时器阶段
+- 定时器回调的排序优先级队列
+- 执行所有截止日期已过的定时器
 - `uv_timer_start()` / `uv_timer_stop()` / `uv_timer_again()`
 
-### Poll Phase
-- Blocks until fd is readable/writable or timeout
-- If no handles active, uses UV_RUN_NOWAIT behavior
-- Platform-specific: epoll (Linux), kqueue (macOS/BSD), IOCP (Windows)
+### 轮询阶段
+- 阻塞直到文件描述符可读/可写或超时
+- 如果没有活动句柄，使用 UV_RUN_NOWAIT 行为
+- 平台特定：epoll (Linux)、kqueue (macOS/BSD)、IOCP (Windows)
 
-### Check Phase
-- Designed for pairing with Poll phase
-- Callbacks here run immediately after I/O polling
-- Useful for "immediate after I/O" work
+### 检查阶段
+- 设计与轮询阶段配对
+- 回调在这里在 I/O 轮询后立即运行
+- 用于"I/O 之后立即"的工作
 
-## Backend Iteration
+## 后端迭代
 
 ```c
-// Internal loop structure (simplified)
+// 内部循环结构（简化）
 while (!loop->stop_flag) {
-    uv__update_time(loop);        // Update current time
-    uv__run_timers(loop);          // Phase 1
-    uv__run_closing_handles(loop); // Phase 7
+    uv__update_time(loop);        // 更新当前时间
+    uv__run_timers(loop);          // 阶段 1
+    uv__run_closing_handles(loop); // 阶段 7
     if (loop->stop_flag) break;
     
-    // Poll for I/O
+    // 轮询 I/O
     uv__io_poll(loop, timeout);
     
-    // Process immediate callbacks
+    // 处理立即回调
     uv__process_immediate(loop);
 }
 ```
 
-## Practical Implications
+## 实际影响
 
-- Timers are **not** affected by poll blocking
-- Timer sequence: timers fire in order, independent of other phases
-- `uv_run(UV_RUN_NOWAIT)` never blocks in poll phase
-- Proper handle/reference management keeps loop alive
+- 定时器**不受**轮询阻塞影响
+- 定时器顺序：定时器独立于其他阶段触发
+- `uv_run(UV_RUN_NOWAIT)` 在轮询阶段从不阻塞
+- 适当的句柄/引用管理保持循环活动

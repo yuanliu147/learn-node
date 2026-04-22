@@ -1,56 +1,43 @@
----
-title: "C++ Addons with N-API"
-description: "Building native Node.js addons using N-API (Node-API) for high-performance extensions and system-level integration"
-tags:
-  - nodejs
-  - native-addons
-  - n-api
-  - cpp
-  - ffi
-related:
-  - threadsafe-function
-  - node-startup-flow
----
+# C++ Addons 与 N-API
 
-# C++ Addons with N-API
+原生模块允许开发者编写直接与 Node.js 集成的 C/C++ 代码，实现以下功能：
 
-Native addons allow developers to write C/C++ code that integrates directly with Node.js, enabling:
-- High-performance computational code
-- Direct system-level access
-- Reusing existing C/C++ libraries
-- Building bindings to native APIs
+- 高性能计算代码
+- 直接的系统级访问
+- 复用现有 C/C++ 库
+- 构建原生 API 绑定
 
-**N-API** (Node-API) is the recommended API for building native addons, providing an ABI-stable interface that works across different Node.js versions.
+**N-API**（Node-API）是构建原生模块的推荐 API，提供了跨不同 Node.js 版本的 ABI 稳定接口。
 
-## Why N-API Instead of Native Abstractions (nan)?
+## 为什么选 N-API 而不是 NAN？
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    N-API vs Legacy Addon APIs                   │
+│                    N-API vs 传统 Addon API                       │
 ├──────────────────────┬──────────────────────────────────────────┤
 │     NAN (nan.h)      │              N-API (node_api.h)          │
 ├──────────────────────┼──────────────────────────────────────────┤
-│ Version-specific     │ ABI-stable across Node.js versions       │
-│ Uses V8 APIs         │ Abstracted from V8 internals              │
-│ Breaks on upgrades   │ Addon recompiles rarely needed            │
-│ Complex lifecycle    │ Simplified memory management             │
-│ Manual handle scope  │ Automatic garbage collection              │
+│ 版本特定             │ 跨 Node.js 版本 ABI 稳定                   │
+│ 使用 V8 API          │ 抽象了 V8 内部实现                        │
+│ 升级时会断裂         │ 很少需要重新编译 addon                     │
+│ 生命周期复杂         │ 简化了内存管理                            │
+│ 手动管理 handle scope │ 自动垃圾回收                              │
 └──────────────────────┴──────────────────────────────────────────┘
 ```
 
-## Environment Setup
+## 环境配置
 
-### Installation
+### 安装
 
 ```bash
-# Install node-gyp (build tool for native addons)
+# 安装 node-gyp（原生模块构建工具）
 npm install -g node-gyp
 
-# Check installation
+# 验证安装
 node-gyp --version
 ```
 
-### package.json Configuration
+### package.json 配置
 
 ```json
 {
@@ -69,7 +56,7 @@ node-gyp --version
 }
 ```
 
-### binding.gyp Configuration
+### binding.gyp 配置
 
 ```python
 {
@@ -89,9 +76,9 @@ node-gyp --version
 }
 ```
 
-## Basic N-API Addon Structure
+## 基础 N-API 模块结构
 
-### Hello World Example
+### Hello World 示例
 
 ```cpp
 // src/hello.cc
@@ -100,33 +87,33 @@ node-gyp --version
 
 namespace demo {
 
-// Helper for promise deferred
+// Promise deferred 的辅助结构
 struct AddonData {
     napi_ref callback_ref;
     napi_async_context context;
     napi_env env;
 };
 
-// Cleanup callback for addon data
+// 模块数据清理回调
 void DeleteAddonData(napi_env env, void* data) {
-    // Free any allocated resources
+    // 释放任何已分配的资源
 }
 
-// Echo function - demonstrates basic napi_call_function
+// Echo 函数 - 演示基本的 napi_call_function
 napi_value Echo(napi_env env, napi_callback_info info) {
     napi_status status;
     
-    // Get the argument count and arguments
+    // 获取参数数量和参数
     size_t argc = 1;
     napi_value args[1];
     status = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     if (status != napi_ok) return nullptr;
     
-    // Just return the first argument unchanged
+    // 直接返回第一个参数
     return args[0];
 }
 
-// Add function - demonstrates number operations
+// Add 函数 - 演示数值操作
 napi_value Add(napi_env env, napi_callback_info info) {
     napi_status status;
     
@@ -149,11 +136,11 @@ napi_value Add(napi_env env, napi_callback_info info) {
     return result;
 }
 
-// Initialize the addon
+// 初始化模块
 napi_value Init(napi_env env, napi_value exports) {
     napi_status status;
     
-    // Define the addon methods
+    // 定义模块方法
     napi_property_descriptor desc[] = {
         { "echo", nullptr, Echo, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "add", nullptr, Add, nullptr, nullptr, nullptr, napi_default, nullptr }
@@ -167,19 +154,19 @@ napi_value Init(napi_env env, napi_value exports) {
 
 }  // namespace demo
 
-// Register the addon
+// 注册模块
 NAPI_MODULE(NODE_GYP_MODULE_NAME, demo::Init)
 ```
 
-### Building and Using the Addon
+### 构建和使用模块
 
 ```bash
-# Build the addon
+# 构建模块
 npm run build
 
-# This creates:
-# - build/Release/my_addon.node (on success)
-# - build/Debug/my_addon.node (with --debug flag)
+# 成功后会创建：
+# - build/Release/my_addon.node（成功时）
+# - build/Debug/my_addon.node（带 --debug 标志时）
 ```
 
 ```javascript
@@ -188,25 +175,25 @@ const addon = require('./build/Release/my_addon.node');
 
 console.log(addon.echo('hello'));        // 'hello'
 console.log(addon.echo(42));             // 42
-console.log(addon.add(10, 20));          // 30
-console.log(addon.add(1.5, 2.5));        // 4
+console.log(addon.add(10, 20));         // 30
+console.log(addon.add(1.5, 2.5));       // 4
 ```
 
-## Working with Objects
+## 操作对象
 
-### Creating JavaScript Objects
+### 创建 JavaScript 对象
 
 ```cpp
-// Create an object with properties
+// 创建带属性的对象
 napi_value CreateObject(napi_env env, napi_callback_info info) {
     napi_status status;
     
-    // Create a new empty object
+    // 创建一个新的空对象
     napi_value obj;
     status = napi_create_object(env, &obj);
     if (status != napi_ok) return nullptr;
     
-    // Create property: { name: "value" }
+    // 创建属性：{ name: "value" }
     napi_value name_value;
     status = napi_create_string_utf8(env, "value", NAPI_AUTO_LENGTH, &name_value);
     
@@ -217,7 +204,7 @@ napi_value CreateObject(napi_env env, napi_callback_info info) {
     
     status = napi_define_properties(env, obj, 1, props);
     
-    // Set version property separately
+    // 单独设置 version 属性
     napi_value version;
     status = napi_create_int32(env, 1, &version);
     status = napi_set_named_property(env, obj, "version", version);
@@ -226,7 +213,7 @@ napi_value CreateObject(napi_env env, napi_callback_info info) {
 }
 ```
 
-### Accessing Object Properties
+### 访问对象属性
 
 ```cpp
 napi_value GetObjectProperty(napi_env env, napi_callback_info info) {
@@ -234,11 +221,11 @@ napi_value GetObjectProperty(napi_env env, napi_callback_info info) {
     napi_value obj_arg;
     napi_get_cb_info(env, info, &argc, &obj_arg, nullptr, nullptr);
     
-    // Get named property
+    // 获取命名属性
     napi_value name_value;
     napi_status status = napi_get_named_property(env, obj_arg, "name", &name_value);
     
-    // Get property by key
+    // 通过 key 获取属性
     napi_value key;
     napi_create_string_utf8(env, "name", NAPI_AUTO_LENGTH, &key);
     napi_value value;
@@ -248,10 +235,10 @@ napi_value GetObjectProperty(napi_env env, napi_callback_info info) {
 }
 ```
 
-## Working with Arrays
+## 操作数组
 
 ```cpp
-// Create array: [1, 2, 3]
+// 创建数组：[1, 2, 3]
 napi_value CreateArray(napi_env env, napi_callback_info info) {
     napi_status status;
     
@@ -267,7 +254,7 @@ napi_value CreateArray(napi_env env, napi_callback_info info) {
     return array;
 }
 
-// Get array length and elements
+// 获取数组长度和元素
 napi_value SumArray(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value array_arg;
@@ -292,12 +279,12 @@ napi_value SumArray(napi_env env, napi_callback_info info) {
 }
 ```
 
-## Promises and Async Operations
+## Promise 与异步操作
 
-### Promises with Deferred
+### 带 Deferred 的 Promise
 
 ```cpp
-// Async work structure
+// 异步工作结构
 struct AsyncWorkData {
     napi_deferred deferred;
     napi_async_work work;
@@ -305,16 +292,16 @@ struct AsyncWorkData {
     int32_t result_value;
 };
 
-// Execute callback (runs in background thread)
+// 执行回调（在后台线程运行）
 void ExecuteWork(napi_env env, void* data) {
     AsyncWorkData* work_data = static_cast<AsyncWorkData*>(data);
     
-    // Simulate expensive computation
-    // In real code, this runs in libuv thread pool
+    // 模拟昂贵计算
+    // 实际代码中，这运行在 libuv 线程池
     work_data->result_value = work_data->input_value * 2;
 }
 
-// Complete callback (runs when work is done)
+// 完成回调（工作完成时运行）
 void CompleteWork(napi_env env, napi_status status, void* data) {
     AsyncWorkData* work_data = static_cast<AsyncWorkData*>(data);
     
@@ -324,12 +311,12 @@ void CompleteWork(napi_env env, napi_status status, void* data) {
     // Resolve the promise
     napi_resolve_deferred(env, work_data->deferred, result);
     
-    // Clean up
+    // 清理
     napi_delete_async_work(env, work_data->work);
     delete work_data;
 }
 
-// Promise-returning function
+// 返回 Promise 的函数
 napi_value DoublePromise(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];
@@ -338,12 +325,12 @@ napi_value DoublePromise(napi_env env, napi_callback_info info) {
     int32_t input_value;
     napi_get_value_int32(env, args[0], &input_value);
     
-    // Create promise and deferred
+    // 创建 promise 和 deferred
     napi_value promise;
     napi_deferred deferred;
     napi_create_promise(env, &deferred, &promise);
     
-    // Create async work
+    // 创建异步工作
     AsyncWorkData* work_data = new AsyncWorkData();
     work_data->input_value = input_value;
     work_data->deferred = deferred;
@@ -366,7 +353,7 @@ napi_value DoublePromise(napi_env env, napi_callback_info info) {
 }
 ```
 
-### Using Promises from JavaScript
+### JavaScript 端使用 Promise
 
 ```javascript
 const addon = require('./build/Release/my_addon.node');
@@ -379,19 +366,19 @@ async function test() {
 test().catch(console.error);
 ```
 
-## Error Handling
+## 错误处理
 
-### Creating and Throwing Errors
+### 创建和抛出错误
 
 ```cpp
 napi_value MaybeThrow(napi_env env, napi_callback_info info) {
     napi_status status;
     
-    // Check some condition
+    // 检查某个条件
     bool has_error = true;
     
     if (has_error) {
-        // Create error object
+        // 创建错误对象
         napi_value error_msg;
         napi_create_string_utf8(
             env,
@@ -400,22 +387,22 @@ napi_value MaybeThrow(napi_env env, napi_callback_info info) {
             &error_msg
         );
         
-        // Create TypeError
+        // 创建 TypeError
         napi_value error;
         napi_create_type_error(env, nullptr, error_msg, &error);
         
-        // Throw the error
+        // 抛出错误
         napi_throw(env, error);
         return nullptr;
     }
     
-    // Return normally
+    // 正常返回
     napi_value result;
     napi_create_string_utf8(env, "OK", NAPI_AUTO_LENGTH, &result);
     return result;
 }
 
-// Error with custom code
+// 带自定义错误码的错误
 napi_value CustomError(napi_env env, napi_callback_info info) {
     napi_value error;
     napi_create_error(
@@ -425,7 +412,7 @@ napi_value CustomError(napi_env env, napi_callback_info info) {
         &error
     );
     
-    // Set error code
+    // 设置错误码
     napi_value code;
     napi_create_string_utf8(env, "CUSTOM_ERROR", NAPI_AUTO_LENGTH, &code);
     napi_set_named_property(env, error, "code", code);
@@ -435,7 +422,7 @@ napi_value CustomError(napi_env env, napi_callback_info info) {
 }
 ```
 
-### Handling Errors from JavaScript
+### JavaScript 端处理错误
 
 ```javascript
 try {
@@ -446,14 +433,14 @@ try {
 }
 ```
 
-## Memory Management
+## 内存管理
 
-### Reference Counting
+### 引用计数
 
 ```cpp
-// Persistent references keep objects alive
+// 持久引用保持对象存活
 struct PersistentData {
-    napi_ref ref;       // Persistent reference to object
+    napi_ref ref;       // 对象的持久引用
     int32_t value;
 };
 
@@ -462,33 +449,32 @@ napi_value CreatePersistent(napi_env env, napi_callback_info info) {
     napi_value obj_arg;
     napi_get_cb_info(env, info, &argc, &obj_arg, nullptr, nullptr);
     
-    // Create a reference (initial ref count = 1)
+    // 创建引用（初始引用计数 = 1）
     napi_ref ref;
     napi_create_reference(env, obj_arg, 1, &ref);
     
-    // The object won't be garbage collected
-    // until we delete the reference
+    // 在删除引用之前，对象不会被垃圾回收
     
     return nullptr;
 }
 
 napi_value FreePersistent(napi_env env, napi_callback_info info) {
-    // Assuming we stored ref somewhere accessible
+    // 假设我们将 ref 存储在某个可访问的地方
     // napi_delete_reference(env, ref);
     
     return nullptr;
 }
 ```
 
-### Scope Management
+### 作用域管理
 
 ```cpp
-// For older N-API versions, manual handle scopes were needed
-// N-API 8+ uses automatic garbage collection
+// 对于旧版 N-API，需要手动 handle scopes
+// N-API 8+ 使用自动垃圾回收
 
 napi_value ExampleScope(napi_env env, napi_callback_info info) {
-    // No need for explicit HandleScope in modern N-API
-    // V8 handlescope is managed automatically
+    // 现代 N-API 不需要显式 HandleScope
+    // V8 handlescope 由系统自动管理
     
     napi_value result;
     napi_create_string_utf8(env, "automatic memory", NAPI_AUTO_LENGTH, &result);
@@ -496,14 +482,14 @@ napi_value ExampleScope(napi_env env, napi_callback_info info) {
 }
 ```
 
-## Async Callbacks
+## 异步回调
 
-### Safe Callbacks to JavaScript
+### 安全回调到 JavaScript
 
 ```cpp
-// Thread-safe callback structure
+// 线程安全回调结构
 struct ThreadsafeData {
-    napi_ref callback_ref;  // Reference to JS function
+    napi_ref callback_ref;  // JS 函数的引用
     napi_async_context context;
     std::atomic<bool> running;
 };
@@ -513,43 +499,43 @@ void ThreadsafeCallback(void* data) {
     
     napi_env env = ts_data->context.env;
     
-    // Get the callback function
+    // 获取回调函数
     napi_value callback;
     napi_get_reference_value(env, ts_data->callback_ref, &callback);
     
-    // Call the callback
+    // 调用回调
     napi_value result;
     napi_value undefined;
     napi_get_undefined(env, &undefined);
     
     napi_call_function(
         env,
-        undefined,    // 'this' context
+        undefined,    // 'this' 上下文
         callback,
         0,            // argc
         nullptr,      // argv
-        &result       // return value
+        &result       // 返回值
     );
 }
 
-// JavaScript side:
+// JavaScript 端：
 function onProgress(progress) {
     console.log(`Progress: ${progress}%`);
 }
 
-// This is unsafe without ThreadsafeFunction (see threadsafe-function.md)
+// 注意：没有 ThreadsafeFunction 是不安全的（见 threadsafe-function.md）
 ```
 
-## Best Practices
+## 最佳实践
 
-### 1. Use node-addon-api Header-Only Library
+### 1. 使用 node-addon-api 头文件库
 
 ```cpp
-// Instead of raw N-API, use the C++ wrapper
+// 使用 C++ 包装器而不是原始 N-API
 #include <node_api.h>
 #include <napi.h>
 
-// Much cleaner C++ API
+// 更简洁的 C++ API
 Napi::Number Add(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 2) {
@@ -571,17 +557,17 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 NODE_API_MODULE(addon, Init)
 ```
 
-### 2. Always Check Return Status
+### 2. 始终检查返回状态
 
 ```cpp
-// BAD: Ignoring return status
+// 错误：忽略返回状态
 napi_value BadFunction(napi_env env, napi_callback_info info) {
     napi_value result;
-    napi_create_int32(env, 42, &result);  // Ignores status!
+    napi_create_int32(env, 42, &result);  // 忽略了状态！
     return result;
 }
 
-// GOOD: Check every call
+// 正确：检查每次调用
 napi_value GoodFunction(napi_env env, napi_callback_info info) {
     napi_status status;
     napi_value result;
@@ -596,10 +582,10 @@ napi_value GoodFunction(napi_env env, napi_callback_info info) {
 }
 ```
 
-### 3. Clean Up Resources
+### 3. 清理资源
 
 ```cpp
-// AddonData cleanup on module unload
+// 模块卸载时的 AddonData 清理
 void Cleanup(void* data) {
     AddonData* addon_data = static_cast<AddonData*>(data);
     
@@ -627,18 +613,18 @@ napi_value Init(napi_env env, napi_value exports) {
 }
 ```
 
-## Key Takeaways
+## 关键要点
 
-1. **N-API provides ABI stability**: Addons compiled for one Node.js version generally work on others
-2. **node-addon-api simplifies C++ usage**: Header-only library provides cleaner API
-3. **Promises are first-class**: Use `napi_create_promise` and `napi_deferred`
-4. **Error handling is explicit**: Always check `napi_status` return values
-5. **Garbage collection is automatic**: N-API manages JS object lifetimes
-6. **Async work uses libuv**: `napi_create_async_work` queues work in the thread pool
+1. **N-API 提供 ABI 稳定性**：为一个 Node.js 版本编译的 addon 通常可以在其他版本上运行
+2. **node-addon-api 简化 C++ 使用**：头文件库提供更清晰的 API
+3. **Promise 是一等公民**：使用 `napi_create_promise` 和 `napi_deferred`
+4. **错误处理是显式的**：始终检查 `napi_status` 返回值
+5. **垃圾回收是自动的**：N-API 管理 JS 对象生命周期
+6. **异步工作使用 libuv**：`napi_create_async_work` 将工作排队到线程池
 
-## References
+## 参考
 
-- [N-API Documentation](https://nodejs.org/api/n-api.html)
+- [N-API 文档](https://nodejs.org/api/n-api.html)
 - [node-addon-api GitHub](https://github.com/nodejs/node-addon-api)
-- [node-gyp Documentation](https://github.com/nodejs/node-gyp)
-- [Writing Native Addons Guide](https://nodejs.org/api/addons.html)
+- [node-gyp 文档](https://github.com/nodejs/node-gyp)
+- [编写原生模块指南](https://nodejs.org/api/addons.html)

@@ -1,36 +1,36 @@
-# Async Concurrency Patterns: Architecture Decision Guide
+# 异步并发模式：架构决策指南
 
-## Overview
+## 概述
 
-Selecting the right concurrency pattern is an architectural decision with lasting implications for performance, resource utilization, and system resilience. The wrong choice can cause throughput bottlenecks, resource exhaustion, or cascading failures.
+选择正确的并发模式是一项具有持久性能、资源利用和系统弹性影响的架构决策。错误的选择可能导致吞吐量瓶颈、资源耗尽或级联故障。
 
-**Decision Framework:**
-- Are operations **dependent** (require ordering) or **independent**?
-- What is your **failure tolerance** (all-must-succeed vs. partial-ok)?
-- Are you managing **finite resources** (API rate limits, connections)?
-- What are the **latency vs. throughput** requirements?
+**决策框架：**
+- 操作是**依赖**（需要排序）还是**独立**？
+- 你的**故障容限**是什么（全成功或部分 OK）？
+- 你在管理**有限资源**（API 速率限制、连接）吗？
+- **延迟 vs 吞吐量**要求是什么？
 
 ---
 
-## 1. Sequential Execution
+## 1. 顺序执行
 
-### When to Use
-- Operations have **data dependencies** between steps
-- You need **atomic ordering** for correctness (e.g., read-then-write sequences)
-- Failure at any step should **fail the entire pipeline**
-- Debugging requires **predictable execution order**
+### 何时使用
+- 操作之间有**数据依赖**
+- 你需要**原子排序**以保证正确性（例如，先读后写序列）
+- 任何步骤失败应该**导致整个管道失败**
+- 调试需要**可预测的执行顺序**
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Simple to reason about | No parallelism = highest latency |
-| Guaranteed ordering | Cannot exploit multi-core |
-| Easy debugging | Poor throughput for independent tasks |
+| 简单易推理 | 无并行 = 最高延迟 |
+| 保证排序 | 无法利用多核 |
+| 易于调试 | 独立任务的吞吐量差 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Simple loop-based sequential
+// 简单的基于循环的顺序
 async function sequentialPromises(items) {
   const results = [];
   for (const item of items) {
@@ -39,7 +39,7 @@ async function sequentialPromises(items) {
   return results;
 }
 
-// reduce-based chain (Promise pipelining)
+// 基于 reduce 的链式（Promise 管道）
 function sequentialReduce(items) {
   return items.reduce((promise, item) => {
     return promise.then(results => {
@@ -52,35 +52,35 @@ function sequentialReduce(items) {
 }
 ```
 
-### Anti-pattern Warning
-Sequential is often used by default when parallel would be correct. If operations are independent, parallelize them.
+### 反模式警告
+顺序执行经常被默认使用，而并行才是正确的选择。如果操作是独立的，请并行化它们。
 
 ---
 
-## 2. Parallel Execution (Promise.all)
+## 2. 并行执行 (Promise.all)
 
-### When to Use
-- Operations are **completely independent**
-- You need **all results** to proceed
-- **All-or-nothing** failure semantics are acceptable
-- Latency is critical and you can parallelize
+### 何时使用
+- 操作**完全独立**
+- 你需要**所有结果**才能继续
+- **全有或全无**失败语义可接受
+- 延迟关键且可以并行化
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Minimum total latency | One failure = total failure |
-| Maximizes throughput | No result until slowest completes |
-| Simple mental model | Memory pressure with many tasks |
+| 最小总延迟 | 一个失败 = 全部失败 |
+| 最大化吞吐量 | 直到最慢的完成才有结果 |
+| 简单的心理模型 | 大量任务时内存压力 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Basic parallel - all must succeed
+// 基本并行 - 所有必须成功
 async function parallelAll(items) {
   return Promise.all(items.map(item => processItem(item)));
 }
 
-// With error handling - graceful degradation
+// 带错误处理 - 优雅降级
 async function parallelAllGraceful(items) {
   const results = await Promise.allSettled(
     items.map(item => processItem(item))
@@ -95,33 +95,33 @@ async function parallelAllGraceful(items) {
 }
 ```
 
-### Selection Criteria
-- Use `Promise.all` when: failure is unacceptable, results are needed together
-- Use `Promise.allSettled` when: partial success is acceptable, you need all outcomes
+### 选择标准
+- 使用 `Promise.all` 当：失败不可接受，需要一起获取结果
+- 使用 `Promise.allSettled` 当：部分成功可接受，你需要所有结果
 
 ---
 
-## 3. Batched Execution (Concurrency Limits)
+## 3. 批处理执行（并发限制）
 
-### When to Use
-- **High-volume operations** that could overwhelm resources
-- External APIs with **rate limits** (e.g., 100 requests/minute)
-- Database connections with **pool size limits**
-- Tasks that are **CPU/memory intensive**
-- You need **predictable resource consumption**
+### 何时使用
+- **大量操作**可能压垮资源
+- 外部 API 有**速率限制**（例如，每分钟 100 请求）
+- 数据库连接有**池大小限制**
+- 任务是 **CPU/内存密集型**
+- 你需要**可预测的资源消耗**
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Controls resource usage | More complex implementation |
-| Survives rate-limited APIs | Lower total throughput than unlimited parallel |
-| Prevents memory exhaustion | Tuning concurrency required |
-| Predictable performance | Batch size affects latency |
+| 控制资源使用 | 实现更复杂 |
+| 在速率受限 API 下存活 | 比无限并行吞吐量低 |
+| 防止内存耗尽 | 需要调优并发 |
+| 可预测的性能 | 批量大小影响延迟 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Fixed batch processing
+// 固定批处理
 async function processBatch(items, concurrency = 10) {
   const results = [];
   
@@ -136,7 +136,7 @@ async function processBatch(items, concurrency = 10) {
   return results;
 }
 
-// Dynamic worker queue - recommended for production
+// 动态工作队列 - 推荐用于生产
 class AsyncBatchProcessor {
   constructor(concurrency = 5) {
     this.concurrency = concurrency;
@@ -167,7 +167,7 @@ class AsyncBatchProcessor {
   }
 }
 
-// Usage
+// 用法
 const processor = new AsyncBatchProcessor(10);
 const results = await Promise.all([
   processor.add(() => fetch('/api/1')),
@@ -176,32 +176,32 @@ const results = await Promise.all([
 ]);
 ```
 
-### Tuning Guide
-- Start with `concurrency = (rate_limit / expected_response_time) * 0.8`
-- Monitor for 429 (Too Many Requests) errors
-- Increase if you see underutilization; decrease on failures
+### 调优指南
+- 从 `concurrency = (rate_limit / expected_response_time) * 0.8` 开始
+- 监控 429（请求过多）错误
+- 如果看到利用不足则增加；如果失败则减少
 
 ---
 
-## 4. Promise.race() - First to Settle
+## 4. Promise.race() - 首个解决
 
-### When to Use
-- **Timeout enforcement** on long-running operations
-- **Fallback to backup** services
-- **Cancelation semantics** (race against cancel signal)
-- Getting fastest response from **multiple equivalent endpoints**
+### 何时使用
+- **超时强制**长时间运行的操作
+- **回退到备份**服务
+- **取消语义**（与取消信号竞速）
+- 从**多个等效端点**获得最快响应
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Prevents indefinite hanging | Winner may be a failure |
-| Enables fallback chains | Unpredictable which completes first |
-| Simple cancelation pattern | May waste resources on slow losers |
+| 防止无限挂起 | 胜者可能是失败 |
+| 启用回退链 | 哪个先完成不可预测 |
+| 简单的取消模式 | 可能浪费慢者的资源 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Timeout pattern
+// 超时模式
 async function withTimeout(promise, ms) {
   const timeout = new Promise((_, reject) => 
     setTimeout(() => reject(new Error('Timeout')), ms)
@@ -209,7 +209,7 @@ async function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]);
 }
 
-// Fastest endpoint pattern
+// 最快端点模式
 async function fastestEndpoint() {
   const endpoints = [
     fetch('https://primary.example.com/data'),
@@ -220,62 +220,62 @@ async function fastestEndpoint() {
 }
 ```
 
-### Important
-`Promise.race` returns when **any** promise settles (fulfill or reject). Use `Promise.any` if you only care about the first successful result.
+### 重要
+`Promise.race` 在**任何** promise 解决（履行或拒绝）时返回。如果你只关心第一个成功结果，使用 `Promise.any`。
 
 ---
 
-## 5. Promise.any() - First to Fulfill
+## 5. Promise.any() - 首个成功
 
-### When to Use
-- You want **any successful response** from multiple sources
-- Redundant services that provide the same capability
-- Latency-critical paths where **speed matters more than source**
+### 何时使用
+- 你想要多个源的**任何成功响应**
+- 提供相同能力的冗余服务
+- **速度比来源更重要**的延迟关键路径
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Minimizes perceived latency | Ignores failures until all fail |
-| Tries all sources automatically | All errors aggregated, not first |
-| No cascade if one source fails | May mask underlying issues |
+| 最小化感知延迟 | 直到全部失败才忽略错误 |
+| 自动尝试所有源 | 聚合所有错误，而不是第一个 |
+| 一个源失败不级联 | 可能掩盖潜在问题 |
 
-### Implementation
+### 实现
 
 ```javascript
 async function anySuccessful(endpoints) {
   return Promise.any(endpoints.map(url => fetch(url).then(r => r.json())));
 }
 
-// Error handling - all sources failed
+// 错误处理 - 所有源都失败
 try {
   const result = await Promise.any(failingPromises);
 } catch (error) {
   console.log('All failed:', error.errors);
-  // error.errors contains all individual rejections
+  // error.errors 包含所有单独拒绝
 }
 ```
 
 ---
 
-## 6. Memoization / Caching
+## 6. 记忆化 / 缓存
 
-### When to Use
-- **Expensive operations** called repeatedly with same arguments
-- **Read-heavy** workloads with infrequent updates
-- **Idempotent operations** where freshness isn't critical
-- Reducing API calls to stay within rate limits
+### 何时使用
+- **昂贵操作**使用相同参数重复调用
+- **读 heavy** 工作负载，更新不频繁
+- **幂等操作**，新鲜度不关键
+- 减少 API 调用以保持在速率限制内
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Eliminates redundant work | Memory grows unbounded without limits |
-| Reduces API costs | Stale data risk |
-| Improves latency | Cache invalidation complexity |
+| 消除冗余工作 | 没有限制内存增长无界 |
+| 减少 API 成本 | 数据陈旧风险 |
+| 改善延迟 | 缓存失效复杂性 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Simple memoization
+// 简单记忆化
 function memoize(asyncFn) {
   const cache = new Map();
   
@@ -289,7 +289,7 @@ function memoize(asyncFn) {
   };
 }
 
-// TTL-based cache - recommended for production
+// 基于 TTL 的缓存 - 推荐用于生产
 class MemoizedAsync {
   constructor(fn, ttlMs = 60000) {
     this.fn = fn;
@@ -311,37 +311,37 @@ class MemoizedAsync {
   }
 }
 
-// Usage
+// 用法
 const fetchUserMemo = new MemoizedAsync(fetchUser, 30000);
 ```
 
-### Cache Invalidation Strategies
-- **TTL**: Time-based expiration (shown above)
-- **LRU**: Evict least-recently-used when size limit reached
-- **Manual**: Expose `invalidate(key)` method
-- **Event-driven**: Invalidate on write operations
+### 缓存失效策略
+- **TTL**：基于时间的过期（见上文）
+- **LRU**：达到大小限制时驱逐最近最少使用
+- **手动**：暴露 `invalidate(key)` 方法
+- **事件驱动**：在写操作时失效
 
 ---
 
-## 7. Retry Pattern
+## 7. 重试模式
 
-### When to Use
-- **Transient failures** (network hiccups, temporary overload)
-- Operations against **eventually-consistent systems**
-- **Idempotent operations** where retry is safe
-- Services known to have **intermittent availability**
+### 何时使用
+- **瞬态失败**（网络抖动、临时过载）
+- 针对**最终一致性系统**的操作
+- **幂等操作**，重试安全
+- 已知有**间歇性可用性**的服务
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Handles transient failures gracefully | Can worsen overload (thundering herd) |
-| Improves success rate | Latency increases on failure |
-| Simple to implement | May mask systemic issues |
+| 优雅处理瞬态失败 | 可能恶化过载（雷鸣般的牛群） |
+| 提高成功率 | 失败时延迟增加 |
+| 简单实现 | 可能掩盖系统性问题 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Basic retry with exponential backoff
+// 带指数退避的基本重试
 async function retry(fn, retries = 3, baseDelay = 1000) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -353,7 +353,7 @@ async function retry(fn, retries = 3, baseDelay = 1000) {
   }
 }
 
-// Retry with jitter - prevents thundering herd
+// 带抖动的重试 - 防止雷鸣般的牛群
 async function retryWithJitter(fn, retries = 3, baseDelay = 1000) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -367,7 +367,7 @@ async function retryWithJitter(fn, retries = 3, baseDelay = 1000) {
   }
 }
 
-// Selective retry - network errors only
+// 选择性重试 - 仅网络错误
 async function retryOnNetworkError(fn, retries = 3) {
   const NETWORK_ERRORS = ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'];
   
@@ -388,27 +388,27 @@ async function retryOnNetworkError(fn, retries = 3) {
 }
 ```
 
-### Anti-pattern Warning
-Never retry on validation errors, authentication failures, or 4xx responses. Only retry on transient 5xx errors and network failures.
+### 反模式警告
+切勿在验证错误、认证失败或 4xx 响应上重试。只在瞬态 5xx 错误和网络失败上重试。
 
 ---
 
-## 8. Circuit Breaker Pattern
+## 8. 断路器模式
 
-### When to Use
-- Calling **external/unreliable services**
-- Preventing **cascading failures** in microservice architectures
-- Systems where **fail-fast** is better than hanging
-- Protecting against **resource exhaustion** from repeated failures
+### 何时使用
+- 调用**外部/不可靠服务**
+- 防止微服务架构中的**级联故障**
+- **快速失败**比挂起更好
+- 防止因重复失败导致的**资源耗尽**
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Prevents cascade failures | Adds architectural complexity |
-| Gives failing services time to recover | May prematurely reject valid requests |
-| Provides observability into service health | Requires tuning thresholds |
+| 防止级联失败 | 增加架构复杂性 |
+| 给失败服务时间恢复 | 可能过早拒绝有效请求 |
+| 提供服务健康可观察性 | 需要调优阈值 |
 
-### Implementation
+### 实现
 
 ```javascript
 class CircuitBreaker {
@@ -457,7 +457,7 @@ class CircuitBreaker {
 }
 ```
 
-### State Machine
+### 状态机
 ```
 CLOSED → (failure threshold reached) → OPEN
 OPEN → (reset timeout elapsed) → HALF_OPEN
@@ -467,26 +467,26 @@ HALF_OPEN → (failure) → OPEN
 
 ---
 
-## 9. Debounce and Throttle
+## 9. 防抖和节流
 
-### When to Use
+### 何时使用
 
-| Pattern | Use Case | Behavior |
-|---------|----------|----------|
-| **Debounce** | Search input, form validation | Waits for **pause** before executing |
-| **Throttle** | Scroll handlers, resize events | Executes at **fixed interval** regardless of frequency |
+| 模式 | 使用场景 | 行为 |
+|------|----------|------|
+| **防抖** | 搜索输入、表单验证 | 等待**停顿**后执行 |
+| **节流** | 滚动处理器、调整大小事件 | 无论频率如何，按**固定间隔**执行 |
 
-### Trade-offs
-| Aspect | Debounce | Throttle |
-|--------|----------|----------|
-| Latency | Higher (waits for pause) | Lower (immediate, then rate-limited) |
-| Server load | Lower | Lower (but may be higher than needed) |
-| User experience | May feel slow | More responsive |
+### 权衡
+| 方面 | 防抖 | 节流 |
+|------|------|------|
+| 延迟 | 更高（等待停顿） | 更低（立即，限速） |
+| 服务器负载 | 更低 | 更低（但可能高于需要） |
+| 用户体验 | 可能感觉慢 | 更响应 |
 
-### Implementation
+### 实现
 
 ```javascript
-// Debounce - waits for silence
+// 防抖 - 等待沉默
 function debounce(fn, delay) {
   let timeoutId;
   return (...args) => {
@@ -499,7 +499,7 @@ const debouncedSearch = debounce((query) => {
   fetchResults(query);
 }, 300);
 
-// Throttle - fixed rate
+// 节流 - 固定速率
 function throttle(fn, limit) {
   let inThrottle = false;
   return (...args) => {
@@ -518,22 +518,22 @@ const throttledScroll = throttle(() => {
 
 ---
 
-## 10. Semaphore Pattern
+## 10. 信号量模式
 
-### When to Use
-- **Strict concurrency limits** (not just batches)
-- Limiting **parallel database queries**
-- Controlling **parallel file operations**
-- Any scenario where you need to **acquire/release** resources explicitly
+### 何时使用
+- **严格并发限制**（不仅仅是批次）
+- 限制**并行数据库查询**
+- 控制**并行文件操作**
+- 任何需要**显式获取/释放**资源的场景
 
-### Trade-offs
-| Pros | Cons |
+### 权衡
+| 优点 | 缺点 |
 |------|------|
-| Fine-grained control | More complex than simple batching |
-| Can limit heterogeneous operations | Manual acquire/release required |
-| Useful for weighted resources | Easy to leak if not properly released |
+| 细粒度控制 | 比简单批处理更复杂 |
+| 可以限制异构操作 | 需要手动获取/释放 |
+| 对加权资源有用 | 如果没有正确释放容易泄漏 |
 
-### Implementation
+### 实现
 
 ```javascript
 class Semaphore {
@@ -570,7 +570,7 @@ class Semaphore {
   }
 }
 
-// Usage - limit to 3 concurrent heavy operations
+// 用法 - 限制为 3 个并发重型操作
 const semaphore = new Semaphore(3);
 
 async function limitedTask() {
@@ -580,15 +580,15 @@ async function limitedTask() {
 
 ---
 
-## 11. Async Queue Pattern
+## 11. 异步队列模式
 
-### When to Use
-- **Job processing systems** with priority support
-- When you need **dynamic concurrency** adjustment
-- **Backpressure** handling (slow consumers vs fast producers)
-- Building **workflow engines**
+### 何时使用
+- 带优先级支持的**作业处理系统**
+- 需要**动态并发**调整
+- **背压**处理（慢消费者 vs 快生产者）
+- 构建**工作流引擎**
 
-### Implementation
+### 实现
 
 ```javascript
 class AsyncQueue {
@@ -620,12 +620,12 @@ class AsyncQueue {
     }
   }
   
-  // Pause processing
+  // 暂停处理
   pause() {
     this.concurrency = 0;
   }
   
-  // Resume with new limit
+  // 使用新限制恢复
   resume(concurrency = 1) {
     this.concurrency = concurrency;
     this.process();
@@ -635,41 +635,41 @@ class AsyncQueue {
 
 ---
 
-## Decision Matrix
+## 决策矩阵
 
-| Requirement | Recommended Pattern | Alternative |
-|-------------|-------------------|-------------|
-| Independent parallel tasks | `Promise.all` | `Promise.allSettled` |
-| Rate-limited API | `AsyncBatchProcessor` | `Semaphore` |
-| Same result multiple times | `MemoizedAsync` | HTTP cache |
-| Timeout on slow operation | `Promise.race` | `retry` + `timeout` |
-| Fastest successful response | `Promise.any` | Custom race logic |
-| Transient failures | `retry` + jitter | Circuit Breaker |
-| Cascading failure protection | `CircuitBreaker` | Bulkhead pattern |
-| User input optimization | `debounce` / `throttle` | - |
-| Resource acquisition | `Semaphore` | `AsyncQueue` |
-| Ordered dependencies | Sequential | `reduce` chain |
-
----
-
-## Anti-Patterns to Avoid
-
-1. **Sequential when parallel**: Using `for`/`await` loop for independent operations
-2. **No retry on network errors**: Blindly failing on transient failures
-3. **Unbounded Promise.all**: Creating thousands of parallel tasks
-4. **No timeout on external calls**: Allowing indefinite hangs
-5. **Retry on 4xx errors**: Retrying validation/auth failures
-6. **Memoization without limits**: Memory leak from unbounded cache
-7. **Circuit breaker too sensitive**: Opening on occasional hiccups
+| 需求 | 推荐模式 | 替代方案 |
+|------|----------|----------|
+| 独立并行任务 | `Promise.all` | `Promise.allSettled` |
+| 速率受限 API | `AsyncBatchProcessor` | `Semaphore` |
+| 多次相同结果 | `MemoizedAsync` | HTTP 缓存 |
+| 慢操作超时 | `Promise.race` | `retry` + `timeout` |
+| 最快成功响应 | `Promise.any` | 自定义竞速逻辑 |
+| 瞬态失败 | `retry` + jitter | 断路器 |
+| 级联失败保护 | `CircuitBreaker` | 隔板模式 |
+| 用户输入优化 | `debounce` / `throttle` | - |
+| 资源获取 | `Semaphore` | `AsyncQueue` |
+| 顺序依赖 | 顺序 | `reduce` 链 |
 
 ---
 
-## Pattern Composition
+## 应避免的反模式
 
-Patterns compose for complex scenarios:
+1. **应该并行时顺序**：对独立操作使用 `for`/`await` 循环
+2. **网络错误不重试**：在瞬态失败上盲目失败
+3. **无界 Promise.all**：创建数千个并行任务
+4. **外部调用无超时**：允许无限挂起
+5. **在 4xx 错误上重试**：重试验证/认证失败
+6. **无限制的记忆化**：无界缓存的内存泄漏
+7. **断路器太敏感**：在偶尔的抖动上打开
+
+---
+
+## 模式组合
+
+模式组合用于复杂场景：
 
 ```javascript
-// Production-ready external API call
+// 生产就绪的外部 API 调用
 class RobustApiClient {
   constructor(url) {
     this.url = url;

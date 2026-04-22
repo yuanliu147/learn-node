@@ -1,19 +1,19 @@
-# Async/Await
+# Async/Await 异步函数
 
-## Overview
+## 概述
 
-Async/await is syntactic sugar over Promises that makes asynchronous code look and behave more like synchronous code. Introduced in ES2017, it provides an architectural choice for managing asynchronous operations in JavaScript.
+Async/await 是 Promises 的语法糖，使异步代码看起来更像同步代码。引入于 ES2017，它为管理 JavaScript 中的异步操作提供了一种架构选择。
 
-**Architecture Perspective**: Async/await represents a declarative approach to async control flow, trading some granular control for improved readability and maintainability. Understanding when to use it (and when not to) is a key architectural decision.
+**架构视角**：Async/await 代表了一种声明式的异步控制流方法，以一定的细粒度控制换取更好的可读性和可维护性。理解何时使用它（何时不使用）是一个关键的架构决策。
 
-## What Problem It Solves
+## 解决什么问题
 
-### The Promise Chain Problem
+### Promise 链问题
 
-Raw Promise chains become unwieldy:
+原始 Promise 链变得笨拙：
 
 ```javascript
-// Hard to read: 3 levels of nesting
+// 难以阅读：3 层嵌套
 fetch('/api/user')
   .then(user => fetch(`/api/posts/${user.id}`))
   .then(posts => fetch(`/api/comments/${posts[0].id}`))
@@ -21,12 +21,12 @@ fetch('/api/user')
   .catch(err => console.error(err));
 ```
 
-### The Callback Pyramid
+### 回调金字塔
 
-Async/await flattens this into linear code:
+Async/await 将其展平为线性代码：
 
 ```javascript
-// Easy to read: sequential, linear flow
+// 易读：顺序、线性流程
 async function getComments() {
   try {
     const user = await fetch('/api/user');
@@ -39,58 +39,58 @@ async function getComments() {
 }
 ```
 
-## Architecture
+## 架构
 
-### Execution Model
+### 执行模型
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Call Site                                 │
-│  async function demo() {                                     │
-│    console.log('1');                                        │
-│    await promise;  ◄─── Pauses only this function           │
-│    console.log('3');                                        │
-│  }                                                           │
+│                    调用站点                                  │
+│  async function demo() {                                   │
+│    console.log('1');                                      │
+│    await promise;  ◄─── 仅暂停此函数                      │
+│    console.log('3');                                      │
+│  }                                                         │
 │                                                               │
-│  console.log('2');  ←── Main thread continues               │
-│  demo();                                                     │
-│  console.log('4');  ←── Runs before '3'                      │
+│  console.log('2');  ←── 主线程继续                        │
+│  demo();                                                   │
+│  console.log('4');  ←── 在 '3' 之前运行                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Relationship to Promises
+### 与 Promise 的关系
 
-Async/await compiles down to Promise chains:
+Async/await 编译为 Promise 链：
 
 ```javascript
-// What you write:
+// 你写的：
 async function example() {
   const a = await Promise.resolve(1);
   const b = await Promise.resolve(2);
   return a + b;
 }
 
-// What it becomes (simplified):
+// 它变成的（简化版）：
 function example() {
   return Promise.resolve(1)
     .then(a => Promise.resolve(2).then(b => a + b));
 }
 ```
 
-### State Machine Transformation
+### 状态机转换
 
-The compiler transforms async functions into a state machine:
+编译器将 async 函数转换为状态机：
 
 ```javascript
-// Your code:
+// 你的代码：
 async function foo() {
   const x = await fetchX();
   const y = await fetchY();
   return x + y;
 }
 
-// Generated state machine (simplified):
-let state = 0; // 0=start, 1=waiting-x, 2=waiting-y, 3=done
+// 生成的状态机（简化版）：
+let state = 0; // 0=开始, 1=等待x, 2=等待y, 3=完成
 
 function foo() {
   return new Promise((resolve, reject) => {
@@ -111,44 +111,44 @@ function foo() {
 }
 ```
 
-## Advantages
+## 优势
 
-| Advantage | Description |
-|-----------|-------------|
-| **Readability** | Code reads like synchronous steps, reducing cognitive load |
-| **Error Handling** | Try/catch works like synchronous code—no `.catch()` chains |
-| **Debugging** | Step-through debugging works naturally; breakpoints hit line-by-line |
-| **Stack Traces** | Better stack traces than raw Promise chains |
-| **Control Flow** | Natural expression of sequential dependencies |
+| 优势 | 描述 |
+|------|------|
+| **可读性** | 代码像同步步骤一样阅读，减少认知负担 |
+| **错误处理** | try/catch 像同步代码一样工作——没有 `.catch()` 链 |
+| **调试** | 逐步调试自然工作；断点逐行命中 |
+| **堆栈跟踪** | 比原始 Promise 链更好的堆栈跟踪 |
+| **控制流** | 自然表达顺序依赖 |
 
-## Disadvantages
+## 劣势
 
-| Disadvantage | Description |
-|--------------|-------------|
-| **Overhead** | Slight performance cost vs raw Promise chains (state machine creation) |
-| **Loss of Granular Control** | Can't easily cancel, pause, or inspect in-progress async ops |
-| **Parallelism Blur** | Easy to accidentally write sequential code when parallel intended |
-| **Blocking Semantics** | `await` can suggest "blocking" to those unfamiliar (it doesn't) |
-| **Error Stack Complexity** | Errors can have confusing stacks when await chains cross microtasks |
+| 劣势 | 描述 |
+|------|------|
+| **开销** | 与原始 Promise 链相比略有性能成本（状态机创建） |
+| **失去细粒度控制** | 不能轻松取消、暂停或检查进行中的异步操作 |
+| **并行性模糊** | 容易意外写出顺序代码而本意是并行 |
+| **阻塞语义** | `await` 可能让不熟悉的人误以为"阻塞"（其实不会） |
+| **错误堆栈复杂性** | 当 await 链跨越微任务时，错误可能有令人困惑的堆栈 |
 
-## Applicable Scenarios
+## 适用场景
 
-### ✅ Good Fit: Sequential Dependencies
+### ✅ 适合：顺序依赖
 
-When each step depends on the previous:
+当每一步依赖前一步时：
 
 ```javascript
 async function getUserDashboard(userId) {
-  const user = await fetchUser(userId);      // Need user first
-  const permissions = await fetchPerms(user.role);  // Depends on user
-  const dashboard = await buildDashboard(user, permissions); // Depends on both
+  const user = await fetchUser(userId);      // 首先需要 user
+  const permissions = await fetchPerms(user.role);  // 依赖 user
+  const dashboard = await buildDashboard(user, permissions); // 依赖两者
   return dashboard;
 }
 ```
 
-### ✅ Good Fit: Error Propagation
+### ✅ 适合：错误传播
 
-When you want centralized error handling:
+当你想要集中式错误处理时：
 
 ```javascript
 async function processOrder(orderId) {
@@ -158,36 +158,36 @@ async function processOrder(orderId) {
     const shipment = await createShipment(order);
     return { order, payment, shipment };
   } catch (error) {
-    // All errors land here—no need for .catch() chains
+    // 所有错误都到这里——不需要 .catch() 链
     await logError(error);
     throw error;
   }
 }
 ```
 
-### ❌ Poor Fit: Fire-and-Forget
+### ❌ 不适合：即发即弃
 
-When you don't care about the result:
+当你不在乎结果时：
 
 ```javascript
-// Wasteful: creates unnecessary async machinery
+// 浪费：创建不必要的异步机制
 async function notifyUsers() {
-  await sendEmail();  // Waiting for email is unnecessary
+  await sendEmail();  // 等待 email 是不必要的
 }
 
-// Better: fire and forget
+// 更好：即发即弃
 function notifyUsers() {
-  sendEmail();  // Returns Promise but we don't await
-  return;       // Immediate return
+  sendEmail();  // 返回 Promise 但我们不 await
+  return;       // 立即返回
 }
 ```
 
-### ❌ Poor Fit: Highly Dynamic Concurrency
+### ❌ 不适合：高度动态并发
 
-When you need fine-grained control over many parallel operations:
+当你需要对许多并行操作进行细粒度控制时：
 
 ```javascript
-// Await makes this awkward
+// await 使这变得尴尬
 async function processWithDynamicLimits() {
   const results = [];
   for (const batch of chunks) {
@@ -202,34 +202,34 @@ async function processWithDynamicLimits() {
   }
 }
 
-// Consider: dedicated concurrency libraries or generators instead
+// 考虑：使用专用的并发库或生成器代替
 ```
 
-## Selection Decision
+## 选择决策
 
-### Choose Async/Await When:
+### 选择 Async/Await 当：
 
-1. **Linear dependency chains**: A → B → C where each needs the previous
-2. **Centralized error handling**: Try/catch covers all operations
-3. **Readability priority**: Team familiar with the pattern
-4. **Standard CRUD operations**: Database calls, API requests, file I/O
-5. **Middleware/filter patterns**: Sequential processing of requests
+1. **线性依赖链**：A → B → C，每步都需要前一步
+2. **集中式错误处理**：try/catch 覆盖所有操作
+3. **优先可读性**：团队熟悉此模式
+4. **标准 CRUD 操作**：数据库调用、API 请求、文件 I/O
+5. **中间件/过滤器模式**：请求的顺序处理
 
-### Choose Raw Promises When:
+### 选择原始 Promises 当：
 
-1. **Parallel-only operations**: No dependencies between tasks
-2. **Fine-grained control**: Need to inspect, cancel, or compose futures
-3. **Performance-critical paths**: Every microsecond matters (rare)
-4. **Library code**: Don't want to impose async/await on consumers
-5. **Streaming/chunked processing**: Generator-based patterns
+1. **纯并行操作**：任务之间没有依赖
+2. **细粒度控制**：需要检查、取消或组合 futures
+3. **性能关键路径**：每一微秒都很重要（罕见）
+4. **库代码**：不想对消费者施加 async/await
+5. **流式/分块处理**：基于生成器的模式
 
-### Hybrid Approach
+### 混合方法
 
-Mix based on context:
+根据上下文混合：
 
 ```javascript
 class DataService {
-  // Use async/await for readable method bodies
+  // 使用 async/await 以获得可读的方法体
   async fetchUserData(userId) {
     const [user, posts, preferences] = await Promise.all([
       this.fetchUser(userId),
@@ -237,65 +237,65 @@ class DataService {
       this.fetchPreferences(userId)
     ]);
     
-    // Use raw Promise for conditional logic
+    // 使用原始 Promise 进行条件逻辑
     return this.calculateScore(user, posts, preferences)
       .then(score => ({ user, posts, preferences, score }));
   }
 }
 ```
 
-## Common Misunderstandings
+## 常见误解
 
-### Misunderstanding 1: "Await Blocks the Thread"
+### 误解 1："Await 阻塞线程"
 
-**Wrong**: `await` pauses JavaScript execution like a sleep.
+**错误**：`await` 像 sleep 一样暂停 JavaScript 执行。
 
-**Right**: `await` pauses only the async function. The main thread continues.
+**正确**：`await` 仅暂停 async 函数。主线程继续。
 
 ```javascript
 async function demo() {
   console.log('1');
   await new Promise(r => setTimeout(r, 100));
-  console.log('3'); // Runs after 100ms, but main code continues
+  console.log('3'); // 100ms 后运行，但主代码继续
 }
 
 console.log('2');
 demo();
 console.log('4');
 
-// Output: 2, 1, 4, 3  (NOT 2, 1, 3, 4)
+// 输出：2, 1, 4, 3（不是 2, 1, 3, 4）
 ```
 
-### Misunderstanding 2: Sequential vs Parallel
+### 误解 2：顺序 vs 并行
 
-**Wrong**: `await` inside array methods runs in parallel.
+**错误**：`.map()` 中的 `await` 是并行运行的。
 
-**Right**: `await` in a `.map()` callback still runs sequentially unless combined with `Promise.all()`.
+**正确**：`.map()` 中的 `await` 仍然是顺序运行，除非与 `Promise.all()` 结合。
 
 ```javascript
-// SLOW: Sequential (3s total)
+// 慢：顺序（总共 3s）
 async function slowWay(files) {
   return files.map(async file => {
-    return await compress(file); // Each waits for previous!
+    return await compress(file); // 每个都等待前一个！
   });
 }
 
-// FAST: Parallel (~1s total)
+// 快：并行（总共约 1s）
 async function fastWay(files) {
   return Promise.all(
-    files.map(file => compress(file)) // No await needed
+    files.map(file => compress(file)) // 不需要 await
   );
 }
 ```
 
-### Misunderstanding 3: Return vs Return await
+### 误解 3：Return vs Return await
 
 ```javascript
-// Different behavior!
+// 行为不同！
 
 async function withReturnAwait() {
   try {
-    return await fetchData(); // try/catch catches errors
+    return await fetchData(); // try/catch 捕获错误
   } catch (e) {
     console.error(e);
   }
@@ -303,50 +303,50 @@ async function withReturnAwait() {
 
 async function withReturn() {
   try {
-    return fetchData(); // try/catch DOES NOT catch—returns rejected Promise
+    return fetchData(); // try/catch 不捕获——返回 rejected Promise
   } catch (e) {
-    console.error(e); // Never runs!
+    console.error(e); // 永远不会运行！
   }
 }
 ```
 
-### Misunderstanding 4: Async Arrow Functions
+### 误解 4：Async 箭头函数
 
 ```javascript
-// Concise body: implicit return (no await wrapping)
+// 简洁体：隐式返回（没有 await 包装）
 const getData = async (url) => fetch(url).then(r => r.json());
 
-// Block body: explicit return needed
+// 块体：需要显式返回
 const getData = async (url) => {
-  const response = await fetch(url);  // This await works
+  const response = await fetch(url);  // 这个 await 有效
   return response.json();
 };
 ```
 
-## Basic Syntax
+## 基本语法
 
-### Async Functions
+### Async 函数
 
-An `async` function always returns a Promise:
+`async` 函数始终返回 Promise：
 
 ```javascript
 async function fetchData(url) {
   return 'data';
 }
 
-// Equivalent to:
+// 等价于：
 function fetchData(url) {
   return Promise.resolve('data');
 }
 ```
 
-### Await Operator
+### Await 操作符
 
-The `await` keyword:
-- Can only be used inside an `async` function
-- Pauses execution of the async function until the Promise settles
-- Returns the resolved value if the Promise fulfills
-- Throws the error if the Promise rejects
+`await` 关键字：
+- 只能在内 `async` 函数中使用
+- 暂停 async 函数执行直到 Promise 解决
+- 如果 Promise 履行则返回解析后的值
+- 如果 Promise 拒绝则抛出错误
 
 ```javascript
 async function example() {
@@ -355,35 +355,35 @@ async function example() {
 }
 ```
 
-## Await Behavior
+## Await 行为
 
-### Parallel vs Sequential
+### 并行 vs 顺序
 
-**Sequential** (slow—each waits for previous):
+**顺序**（慢——每个等待前一个）：
 
 ```javascript
 async function sequential() {
-  const a = await fetchA();  // Waits 1s
-  const b = await fetchB();  // Waits 1s (after a completes)
-  const c = await fetchC();  // Waits 1s (after b completes)
-  // Total: ~3s
+  const a = await fetchA();  // 等待 1s
+  const b = await fetchB();  // 等待 1s（a 完成后）
+  const c = await fetchC();  // 等待 1s（b 完成后）
+  // 总计：约 3s
 }
 ```
 
-**Parallel** (fast—all start together):
+**并行**（快——全部立即开始）：
 
 ```javascript
 async function parallel() {
   const [a, b, c] = await Promise.all([
-    fetchA(),  // All start immediately
+    fetchA(),  // 所有立即开始
     fetchB(),
     fetchC()
   ]);
-  // Total: ~1s (all run concurrently)
+  // 总计：约 1s（全部并发运行）
 }
 ```
 
-## Error Handling
+## 错误处理
 
 ### Try/Catch
 
@@ -398,7 +398,7 @@ async function withTryCatch() {
 }
 ```
 
-### Multiple Await with Single Try/Catch
+### 多个 Await 与单一 Try/Catch
 
 ```javascript
 async function getUserData(userId) {
@@ -414,9 +414,9 @@ async function getUserData(userId) {
 }
 ```
 
-### Partial Failures with Promise.allSettled
+### 使用 Promise.allSettled 处理部分失败
 
-Use `Promise.allSettled` when you want to handle partial failures:
+当你想处理部分失败时使用 `Promise.allSettled`：
 
 ```javascript
 async function loadAllData() {
@@ -434,9 +434,9 @@ async function loadAllData() {
 }
 ```
 
-## Common Patterns
+## 常见模式
 
-### Sequential Processing
+### 顺序处理
 
 ```javascript
 async function processItems(items) {
@@ -451,7 +451,7 @@ async function processItems(items) {
 }
 ```
 
-### Parallel with Limited Concurrency
+### 限制并发的并行处理
 
 ```javascript
 async function processWithLimit(items, limit = 3) {
@@ -469,7 +469,7 @@ async function processWithLimit(items, limit = 3) {
 }
 ```
 
-### Retry with Exponential Backoff
+### 指数退避重试
 
 ```javascript
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
@@ -486,9 +486,9 @@ async function fetchWithRetry(url, retries = 3, delay = 1000) {
 }
 ```
 
-## Top-Level Await (ES2022)
+## 顶级 Await (ES2022)
 
-In ES modules, you can use await at the top level:
+在 ES 模块中，你可以在顶层使用 await：
 
 ```javascript
 // module.mjs
@@ -496,9 +496,9 @@ const data = await fetch('/api/data').then(r => r.json());
 console.log(data);
 ```
 
-## Async Iterator (for await...of)
+## Async 迭代器 (for await...of)
 
-Process async generators and async iterables:
+处理 async 生成器和 async 迭代器：
 
 ```javascript
 async function* asyncGenerator() {
@@ -514,19 +514,19 @@ async function processAsyncIterator() {
 }
 ```
 
-## Common Pitfalls
+## 常见陷阱
 
-### Forgetting to Await
+### 忘记 Await
 
 ```javascript
-// Bug: doesn't wait for save to complete
+// Bug：没有等待保存完成
 async function updateUser(id, data) {
   await db.connect();
-  db.users.update(id, data); // Missing await—returns Promise silently ignored
+  db.users.update(id, data); // 缺少 await——Promise 被静默忽略
   return { success: true };
 }
 
-// Fix:
+// 修复：
 async function updateUser(id, data) {
   await db.connect();
   await db.users.update(id, data);
@@ -534,34 +534,34 @@ async function updateUser(id, data) {
 }
 ```
 
-### Await in Non-Async Function
+### 在非 Async 函数中使用 Await
 
 ```javascript
-// SyntaxError: await is only valid in async functions
+// SyntaxError: await 只在 async 函数中有效
 function broken() {
   const data = await fetchData();
 }
 
-// Fix: make the function async
+// 修复：使函数成为 async
 async function fixed() {
   const data = await fetchData();
   return data;
 }
 ```
 
-## Questions to Test Understanding
+## 测试理解的问题
 
-1. When does `await` block the main thread vs. only the async function?
-2. Why might `Promise.all([...items.map(async x => await foo(x))])` be slower than expected?
-3. What's the difference between `return await` and `return` in an async function?
-4. When would you choose raw Promises over async/await?
-5. How does async/await relate to the event loop phases?
+1. `await` 何时阻塞主线程，何时只阻塞 async 函数？
+2. 为什么 `Promise.all([...items.map(async x => await foo(x))])` 可能比预期慢？
+3. async 函数中 `return await` 和 `return` 有什么区别？
+4. 何时选择原始 Promises 而不是 async/await？
+5. async/await 与事件循环阶段有什么关系？
 
-## Summary
+## 总结
 
-- **Problem solved**: Verbose Promise chains and callback pyramids
-- **Trade-offs**: Readability over granular control
-- **Best for**: Sequential dependencies, centralized error handling
-- **Avoid for**: Fire-and-forget, highly dynamic concurrency
-- **Key insight**: `await` pauses only the async function, not the entire program
-- **Performance**: Slight overhead vs raw Promises; use `Promise.all()` for parallelism
+- **解决的问题**：冗长的 Promise 链和回调金字塔
+- **权衡**：以可读性换取细粒度控制
+- **最适合**：顺序依赖、集中式错误处理
+- **避免用于**：即发即忘、高度动态并发
+- **关键见解**：`await` 只暂停 async 函数，而不是整个程序
+- **性能**：与原始 Promises 相比略有开销；使用 `Promise.all()` 实现并行

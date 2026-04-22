@@ -1,19 +1,19 @@
-# Embedding & Vector Store
+# Embedding 与向量存储
 
-## Concept
+## 概念
 
-Embeddings convert text into dense vectors that capture semantic meaning. Vector databases store these embeddings and enable similarity search - finding the most relevant documents for a given query by comparing vector distances.
+Embedding 将文本转换为密集向量，捕捉语义含义。向量数据库存储这些 embedding 并支持相似性搜索——通过比较向量距离来查找与给定查询最相关的文档。
 
-## Embedding Generation
+## Embedding 生成
 
-### Embedding Models
+### Embedding 模型
 
 ```typescript
 interface EmbeddingModel {
   name: string;
   dimensions: number;
   maxTokens: number;
-  normalize: boolean;  // Whether output is unit-normalized
+  normalize: boolean;  // 输出是否为单位归一化
 }
 
 const EMBEDDING_MODELS = {
@@ -22,10 +22,10 @@ const EMBEDDING_MODELS = {
   'text-embedding-ada-002': { dimensions: 1536, maxTokens: 8191 }
 } as const;
 
-// OpenAI embeddings are normalized to unit length (L2)
+// OpenAI 的 embedding 已归一化为单位长度（L2）
 ```
 
-### Generating Embeddings
+### 生成 Embedding
 
 ```typescript
 class EmbeddingService {
@@ -50,7 +50,7 @@ class EmbeddingService {
     return data.data.map((item: any) => item.embedding);
   }
   
-  // Batch embedding for large corpora
+  // 大规模语料库的批量 embedding
   async embedBatch(texts: string[], batchSize = 100): Promise<number[][]> {
     const results: number[][] = [];
     
@@ -59,7 +59,7 @@ class EmbeddingService {
       const embeddings = await this.embed(batch);
       results.push(...embeddings);
       
-      // Rate limit friendly
+      // 友好于速率限制
       await this.delay(100);
     }
     
@@ -72,10 +72,10 @@ class EmbeddingService {
 }
 ```
 
-### Local Embedding Models
+### 本地 Embedding 模型
 
 ```typescript
-// Using transformers.js for local embeddings
+// 使用 transformers.js 进行本地 embedding
 import { pipeline } from '@xenova/transformers';
 
 class LocalEmbeddingService {
@@ -100,11 +100,11 @@ class LocalEmbeddingService {
 }
 ```
 
-## Vector Store Interface
+## 向量存储接口
 
 ```typescript
 interface VectorStore {
-  // Core operations
+  // 核心操作
   upsert(data: {
     ids: string[];
     embeddings: number[][];
@@ -121,22 +121,22 @@ interface VectorStore {
   
   delete(ids: string[]): Promise<void>;
   
-  // Management
+  // 管理
   getStats(): Promise<StoreStats>;
 }
 
 interface SearchResult {
   id: string;
-  score: number;  // Similarity score
+  score: number;  // 相似度分数
   content?: string;
   metadata?: Record<string, any>;
 }
 ```
 
-## Distance Metrics
+## 距离度量
 
 ```typescript
-// Cosine similarity (most common for embeddings)
+// 余弦相似度（embedding 最常用）
 function cosineSimilarity(a: number[], b: number[]): number {
   let dotProduct = 0;
   let normA = 0;
@@ -151,7 +151,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// Euclidean distance
+// 欧几里得距离
 function euclideanDistance(a: number[], b: number[]): number {
   let sum = 0;
   for (let i = 0; i < a.length; i++) {
@@ -160,13 +160,13 @@ function euclideanDistance(a: number[], b: number[]): number {
   return Math.sqrt(sum);
 }
 
-// Dot product (unnormalized)
+// 点积（未归一化）
 function dotProduct(a: number[], b: number[]): number {
   return a.reduce((sum, ai, i) => sum + ai * b[i], 0);
 }
 ```
 
-## In-Memory Vector Store
+## 内存向量存储
 
 ```typescript
 class InMemoryVectorStore implements VectorStore {
@@ -247,16 +247,16 @@ class InMemoryVectorStore implements VectorStore {
 }
 ```
 
-## Vector Indexing Strategies
+## 向量索引策略
 
-### HNSW (Hierarchical Navigable Small World)
+### HNSW（分层可导航小世界）
 
 ```typescript
-// HNSW is a graph-based index for fast approximate nearest neighbor search
+// HNSW 是一种基于图的索引，用于快速近似最近邻搜索
 class HNSWIndex {
   private levels: Array<Map<string, number[]>> = [];
   private entryPoint: string;
-  private m: number = 16;  // Connections per node
+  private m: number = 16;  // 每个节点的连接数
   private maxLevel: number = 6;
   
   constructor(dimensions: number) {
@@ -275,12 +275,12 @@ class HNSWIndex {
   search(query: number[], k: number): string[] {
     let current = this.entryPoint;
     
-    // Search from top level down
+    // 从顶层向下搜索
     for (let l = this.levels.length - 1; l >= 0; l--) {
       current = this.searchLevel(query, current, this.levels[l]);
     }
     
-    // Collect k nearest using beam search
+    // 使用束搜索收集 k 个最近邻
     return this.beamSearch(query, k);
   }
   
@@ -300,13 +300,13 @@ class HNSWIndex {
   }
   
   private beamSearch(query: number[], k: number): string[] {
-    // Implementation of beam search for final results
+    // 最终结果的束搜索实现
     return [];
   }
 }
 ```
 
-## Popular Vector Databases
+## 流行的向量数据库
 
 ```typescript
 // Pinecone
@@ -381,30 +381,30 @@ class QdrantStore implements VectorStore {
 }
 ```
 
-## Dimensionality Reduction
+## 降维
 
 ```typescript
-// PCA for reducing embedding dimensions
+// PCA 用于减少 embedding 维度
 function pca(vectors: number[][], targetDimensions: number): number[][] {
   const n = vectors.length;
   const m = vectors[0].length;
   
-  // Center the data
+  // 中心化数据
   const mean = vectors[0].map((_, i) => 
     vectors.reduce((sum, v) => sum + v[i], 0) / n
   );
   
   const centered = vectors.map(v => v.map((val, i) => val - mean[i]));
   
-  // Compute covariance matrix (simplified - use actual PCA lib for production)
-  // ... compute eigenvectors ...
+  // 计算协方差矩阵（简化 - 生产环境使用实际的 PCA 库）
+  // ... 计算特征向量 ...
   
-  // Project onto top k eigenvectors
-  // This is a simplified placeholder
+  // 投影到前 k 个特征向量
+  // 这是简化的占位符
   return centered.map(v => v.slice(0, targetDimensions));
 }
 
-// For very high dimensions, use random projection (faster)
+// 对于非常高的维度，使用随机投影（更快）
 function randomProjection(vectors: number[][], targetDimensions: number): number[][] {
   const m = vectors[0].length;
   const projectionMatrix = Array.from({ length: m }, () =>
@@ -418,18 +418,19 @@ function randomProjection(vectors: number[][], targetDimensions: number): number
         result[j] += v[i] * projectionMatrix[i][j];
       }
     }
-    // Normalize
+    // 归一化
     const norm = Math.sqrt(result.reduce((sum, x) => sum + x * x, 0));
     return result.map(x => x / norm);
   });
 }
 ```
 
-## Summary
+## 总结
 
-Embedding and vector stores are foundational to AI backends:
-1. **Embeddings**: Convert text to semantic vectors using models like text-embedding-3
-2. **Distance metrics**: Cosine similarity, Euclidean, dot product
-3. **Vector stores**: In-memory, Pinecone, Weaviate, Qdrant
-4. **Indexing**: HNSW for fast approximate nearest neighbor search
-5. **Optimization**: Batch embedding, dimensionality reduction for scale
+Embedding 和向量存储是 AI 后端的基础：
+
+1. **Embedding**：使用如 text-embedding-3 等模型将文本转换为语义向量
+2. **距离度量**：余弦相似度、欧几里得距离、点积
+3. **向量存储**：内存型、Pinecone、Weaviate、Qdrant
+4. **索引**：HNSW 用于快速近似最近邻搜索
+5. **优化**：批量 embedding、维度 reduction 以实现规模化

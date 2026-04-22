@@ -1,16 +1,16 @@
-# Concurrency Control
+# 并发控制
 
-## Concept
+## 概念
 
-LLM APIs impose rate limits—RPM (requests-per-minute), TPM (tokens-per-minute), and concurrent connections—that constrain throughput. Concurrency control manages these limits to maximize utilization while avoiding 429 errors and account suspension.
+LLM API 施加速率限制——RPM（每分钟请求数）、TPM（每分钟令牌数）和并发连接——这些约束了吞吐量。并发控制管理这些限制，以最大化利用率同时避免 429 错误和账户暂停。
 
-**Architecture Perspective**: Concurrency control is not merely a client-side concern. It spans client libraries, API gateways, and proxy layers. The right implementation depends on where you sit in the stack, your multi-tenant requirements, and whether you prioritize latency, throughput, or cost.
+**架构视角**：并发控制不仅仅是客户端关注的问题。它涉及客户端库、API 网关和代理层。正确的实现取决于你所处的技术栈位置、多租户需求，以及你对延迟、吞吐量或成本的优先级。
 
 ---
 
-## Rate Limit Architecture
+## 速率限制架构
 
-### Where to Implement
+### 在哪里实现
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -31,22 +31,22 @@ LLM APIs impose rate limits—RPM (requests-per-minute), TPM (tokens-per-minute)
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-| Location | Pros | Cons | Best For |
+| 位置 | 优点 | 缺点 | 适用于 |
 |----------|------|------|----------|
-| Client library | Zero network hop, simple | No cross-client coordination | Single service, low traffic |
-| API gateway | Centralized, observable | Single point of throttling | Multi-app, shared LLM budget |
-| Proxy layer | Per-tenant limits, rich metrics | Additional infrastructure | Enterprise, multi-tenant SaaS |
+| 客户端库 | 零网络延迟，简单 | 无跨客户端协调 | 单服务，低流量 |
+| API 网关 | 集中化，可观测 | 单一限流点 | 多应用，共享 LLM 预算 |
+| 代理层 | 每租户限制，丰富的指标 | 额外基础设施 | 企业级，多租户 SaaS |
 
-### Multi-Tenant Considerations
+### 多租户注意事项
 
-In multi-tenant systems, you need **per-tenant** rate limiting alongside **global** provider limits:
+在多租户系统中，你需要**每租户**速率限制以及**全局**提供商限制：
 
 ```typescript
 interface TenantRateLimitConfig {
   tenantId: string;
-  rpmLimit: number;      // Tenant's allocation
-  tpmLimit: number;      // Tenant's allocation
-  burstAllowance: number; // Temporary overflow
+  rpmLimit: number;      // 租户的配额
+  tpmLimit: number;      // 租户的配额
+  burstAllowance: number; // 临时溢出
 }
 
 class MultiTenantLimiter {
@@ -73,21 +73,21 @@ class MultiTenantLimiter {
     const tenantConfig = this.tenantConfigs.get(tenantId);
     if (!tenantConfig) throw new Error(`Unknown tenant: ${tenantId}`);
     
-    // Tenant-level limit (usually stricter than global)
+    // 租户级别限制（通常比全局更严格）
     const tenantLimiter = this.getOrCreateTenantLimiter(tenantId, tenantConfig);
     await tenantLimiter.acquire();
     
-    // Global limit (provider API constraints)
+    // 全局限制（提供商 API 约束）
     return this.globalLimiter.execute(prompt, estimatedTokens, fn);
   }
 }
 ```
 
-**Trade-off**: Per-tenant limits add latency (extra synchronization) but prevent noisy neighbor problems.
+**权衡**：每租户限制增加延迟（额外的同步）但可以防止"噪声邻居"问题。
 
 ---
 
-## Rate Limit Types
+## 速率限制类型
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -95,32 +95,32 @@ class MultiTenantLimiter {
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  RPM (Requests Per Minute)                              │
-│  ├── Limits HTTP requests                               │
-│  ├── Typically 60-3000 depending on tier                │
-│  └── Resets every 60 seconds                            │
+│  ├── 限制 HTTP 请求                                     │
+│  ├── 通常根据套餐不同为 60-3000                          │
+│  └── 每 60 秒重置                                       │
 │                                                         │
 │  TPM (Tokens Per Minute)                                │
-│  ├── Limits token throughput                            │
-│  ├── Usually 60K-1M depending on model/tier            │
-│  └── Enforced via token counting in request body       │
+│  ├── 限制令牌吞吐量                                     │
+│  ├── 通常根据模型/套餐不同为 60K-1M                     │
+│  └── 通过请求体中的令牌计数强制执行                      │
 │                                                         │
 │  Concurrent Connections                                  │
-│  ├── Max simultaneous requests                          │
-│  ├── Usually 5-50                                       │
-│  └── Exceeding causes immediate 429                      │
+│  ├── 最大同时请求数                                      │
+│  ├── 通常为 5-50                                        │
+│  └── 超过会立即导致 429                                 │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Architecture Note**: TPM limits are harder to enforce because token count varies per request. Estimate conservatively and monitor actual consumption via response headers.
+**架构注意**：TPM 限制更难强制执行，因为令牌计数因请求而异。保守估算并通过响应头监控实际消耗。
 
 ---
 
-## Core Algorithms
+## 核心算法
 
-### Token Bucket Algorithm
+### 令牌桶算法
 
-Smooth rate limiting that allows burst traffic within capacity.
+允许突发流量在容量范围内的平滑速率限制。
 
 ```typescript
 class TokenBucket {
@@ -128,9 +128,9 @@ class TokenBucket {
   private lastRefill: number;
   
   constructor(
-    private capacity: number,      // Max tokens
-    private refillRate: number,     // Tokens per second
-    private refillInterval = 1000  // Check every second
+    private capacity: number,      // 最大令牌数
+    private refillRate: number,     // 每秒令牌数
+    private refillInterval = 1000  // 每秒检查一次
   ) {
     this.tokens = capacity;
     this.lastRefill = Date.now();
@@ -144,7 +144,7 @@ class TokenBucket {
       return;
     }
     
-    // Wait for refill
+    // 等待补充
     const waitTime = ((tokens - this.tokens) / this.refillRate) * 1000;
     await this.delay(waitTime);
     
@@ -171,7 +171,7 @@ class TokenBucket {
   }
 }
 
-// Usage
+// 使用
 const rpmBucket = new TokenBucket(60, 60); // 60 RPM
 
 async function callWithRateLimit(fn: () => Promise<any>) {
@@ -180,11 +180,11 @@ async function callWithRateLimit(fn: () => Promise<any>) {
 }
 ```
 
-**When to use**: Token bucket is ideal for smooth rate limiting with burst allowance. It's computationally cheap and easy to reason about.
+**何时使用**：令牌桶是具有突发容量的平滑速率限制的理想选择。它计算成本低廉且易于理解。
 
-### Semaphore for Concurrent Limits
+### 信号量用于并发限制
 
-Limits simultaneous operations—critical for connection pool management.
+限制同时操作——对于连接池管理至关重要。
 
 ```typescript
 class Semaphore {
@@ -204,7 +204,7 @@ class Semaphore {
       return;
     }
     
-    // Wait for a permit
+    // 等待许可
     return new Promise((resolve, reject) => {
       this.waitQueue.push({ resolve, reject });
     });
@@ -230,7 +230,7 @@ class Semaphore {
   }
 }
 
-// Usage: Max 10 concurrent requests
+// 使用：最多 10 个并发请求
 const concurrentLimiter = new Semaphore(10);
 
 async function callLLM(prompt: string): Promise<string> {
@@ -240,17 +240,17 @@ async function callLLM(prompt: string): Promise<string> {
 }
 ```
 
-**When to use**: Semaphores are essential when the upstream has hard concurrent connection limits. They prevent resource exhaustion at the cost of request queuing.
+**何时使用**：当上游有硬性并发连接限制时，信号量是必不可少的。它们以请求排队的代价防止资源耗尽。
 
-### Priority Queue
+### 优先级队列
 
-Fair ordering with importance levels—essential for production systems with mixed workloads.
+具有重要性级别的公平排序——对于具有混合工作负载的生产系统必不可少。
 
 ```typescript
 interface QueuedRequest {
   id: string;
   prompt: string;
-  priority: number;  // Higher = more urgent
+  priority: number;  // 越高越紧急
   resolve: (result: any) => void;
   reject: (error: Error) => void;
   createdAt: Date;
@@ -276,7 +276,7 @@ class PriorityRequestQueue {
         createdAt: new Date()
       });
       
-      // Sort by priority (descending), then by creation time
+      // 按优先级排序（降序），然后按创建时间
       this.queue.sort((a, b) => {
         if (b.priority !== a.priority) return b.priority - a.priority;
         return a.createdAt.getTime() - b.createdAt.getTime();
@@ -310,15 +310,15 @@ class PriorityRequestQueue {
 }
 ```
 
-**When to use**: Priority queues are critical when you have heterogeneous workloads (e.g., interactive user requests vs. batch processing). They ensure high-priority requests aren't blocked by bulk operations.
+**何时使用**：当你有异构工作负载（例如交互式用户请求与批处理）时，优先级队列至关重要。它们确保高优先级请求不会被批量操作阻塞。
 
 ---
 
-## Advanced Patterns
+## 高级模式
 
-### Retry with Exponential Backoff
+### 指数退避重试
 
-**Architecture Note**: Retry logic belongs at the call site, not scattered throughout your codebase. Centralize it in a retry handler that applies consistent policies.
+**架构注意**：重试逻辑属于调用方，而不是分散在代码库中。将其集中在重试处理器中，应用一致的政策。
 
 ```typescript
 interface RetryConfig {
@@ -381,11 +381,11 @@ class RetryHandler {
 }
 ```
 
-**Trade-off**: Retries increase tail latency and can exacerbate rate limit pressure during outages. Use with a circuit breaker.
+**权衡**：重试增加尾部延迟，并可能在中断期间加剧速率限制压力。结合断路器使用。
 
-### Circuit Breaker Pattern
+### 断路器模式
 
-Prevent cascading failures when LLM providers are degraded.
+当 LLM 提供商降级时，防止级联故障。
 
 ```typescript
 class CircuitBreaker {
@@ -395,7 +395,7 @@ class CircuitBreaker {
   
   constructor(
     private failureThreshold: number = 5,
-    private recoveryTimeout: number = 30000, // 30s
+    private recoveryTimeout: number = 30000, // 30秒
     private halfOpenRequests: number = 3
   ) {}
   
@@ -438,11 +438,11 @@ class CircuitBreaker {
 }
 ```
 
-**Architecture Note**: Circuit breakers work well with adaptive rate limiters. When the breaker opens, the adaptive limiter will reduce throughput, naturally decreasing load on the failing service.
+**架构注意**：断路器与自适应速率限制器配合良好。当断路器打开时，自适应限制器将减少吞吐量，自然降低故障服务的负载。
 
-### Adaptive Rate Limiter
+### 自适应速率限制器
 
-Self-tuning based on observed error rates—ideal for production systems.
+基于观察到的错误率自动调整——适合生产系统。
 
 ```typescript
 class AdaptiveRateLimiter {
@@ -468,10 +468,10 @@ class AdaptiveRateLimiter {
     estimatedTokens: number,
     fn: () => Promise<T>
   ): Promise<T> {
-    // Adaptive adjustment every 30 seconds
+    // 每 30 秒自适应调整
     this.adjustLimits();
     
-    // Acquire all limits
+    // 获取所有限制
     await Promise.all([
       this.rpm.acquire(),
       this.tpm.acquire(estimatedTokens),
@@ -497,12 +497,12 @@ class AdaptiveRateLimiter {
     const errorRate = this.errorCount / (this.successCount + this.errorCount);
     
     if (errorRate > 0.1) {
-      // Too many errors: reduce limits by 20%
+      // 错误太多：减少 20% 限制
       this.rpm.capacity *= 0.8;
       this.tpm.capacity *= 0.8;
       this.maxConcurrent = Math.floor(this.maxConcurrent * 0.8);
     } else if (errorRate < 0.01) {
-      // Very successful: increase limits by 10%
+      // 非常成功：增加 10% 限制
       this.rpm.capacity *= 1.1;
       this.tpm.capacity *= 1.1;
       this.maxConcurrent = Math.floor(this.maxConcurrent * 1.1);
@@ -515,29 +515,29 @@ class AdaptiveRateLimiter {
 }
 ```
 
-**Trade-off**: Adaptive limiting requires tuning thresholds for your traffic patterns. Aggressive adaptation can cause oscillation; conservative adaptation may not respond fast enough to outages.
+**权衡**：自适应限制需要为你的流量模式调整阈值。激进的适应可能导致振荡；保守的适应可能无法足够快地响应中断。
 
 ---
 
-## Observability
+## 可观测性
 
-### Metrics to Track
+### 需要跟踪的指标
 
 ```typescript
 interface RateLimitMetrics {
-  // Throughput
+  // 吞吐量
   requestsPerMinute: number;
   tokensPerMinute: number;
   
-  // Health
+  // 健康状况
   errorRate: number;
   circuitBreakerState: string;
   
-  // Queue
+  // 队列
   queueDepth: number;
   averageWaitTime: number;
   
-  // Limits
+  // 限制
   utilizedCapacity: number;  // 0-1
   throttledRequests: number;
 }
@@ -546,7 +546,7 @@ class RateLimitObserver {
   private metrics: RateLimitMetrics;
   
   recordRequest(tokens: number, latency: number, success: boolean) {
-    // Update Prometheus metrics or similar
+    // 更新 Prometheus 指标或类似指标
   }
   
   getMetrics(): RateLimitMetrics {
@@ -555,26 +555,26 @@ class RateLimitObserver {
 }
 ```
 
-**Key metrics for alerting**:
-- Error rate > 5% sustained for 2 minutes
-- Queue depth > 100 for > 5 minutes
-- Circuit breaker open
+**关键告警指标**：
+- 错误率 > 5% 持续 2 分钟
+- 队列深度 > 100 超过 5 分钟
+- 断路器打开
 
 ---
 
-## Summary
+## 总结
 
-| Pattern | When to Use | Key Trade-off |
+| 模式 | 何时使用 | 关键权衡 |
 |---------|-------------|---------------|
-| Token Bucket | Smooth rate limiting with bursts | Requires token estimation |
-| Semaphore | Hard concurrent limits | Queues requests, adds latency |
-| Priority Queue | Mixed workload priorities | More complex ordering logic |
-| Retry + Backoff | Transient failures | Increases tail latency |
-| Circuit Breaker | Prevent cascading failures | May reject valid requests |
-| Adaptive Limiter | Production traffic | Requires tuning |
+| 令牌桶 | 带突发的平滑速率限制 | 需要令牌估算 |
+| 信号量 | 硬性并发限制 | 排队请求，增加延迟 |
+| 优先级队列 | 混合工作负载优先级 | 更复杂的排序逻辑 |
+| 重试 + 退避 | 瞬态故障 | 增加尾部延迟 |
+| 断路器 | 防止级联故障 | 可能拒绝有效请求 |
+| 自适应限制器 | 生产流量 | 需要调整 |
 
-**Architecture Decision Guide**:
-1. Single service, low traffic → Token bucket + semaphore
-2. Multi-app shared budget → Add API gateway layer
-3. Enterprise multi-tenant → Proxy layer with per-tenant limits
-4. Mission-critical → Add circuit breaker + adaptive limiter + full observability
+**架构决策指南**：
+1. 单服务，低流量 → 令牌桶 + 信号量
+2. 多应用共享预算 → 添加 API 网关层
+3. 企业多租户 → 代理层，每租户限制
+4. 关键任务 → 添加断路器 + 自适应限制器 + 完全可观测性

@@ -1,256 +1,256 @@
-# Node.js Event Loop Architecture
+# Node.js 事件循环架构
 
-## Design Philosophy
+## 设计哲学
 
-Node.js was designed to solve a fundamental problem: **building I/O-intensive applications that scale**. Traditional thread-per-connection models crumble under high concurrency due to memory overhead and context-switching costs. The event loop is the core mechanism enabling Node.js's alternative approach: **a single thread handling many concurrent operations through cooperative scheduling**.
+Node.js 旨在解决一个根本问题：**构建可扩展的 I/O 密集型应用**。传统的每连接一线程模型由于内存开销和上下文切换成本，在高并发下崩溃。事件循环是 Node.js 替代方案的核心机制：**单线程通过协作调度处理许多并发操作**。
 
-The key insight is that most application time is spent waiting for I/O, not processing. Rather than dedicating a thread to each connection (blocking on wait), Node.js multiplexes many connections on a single thread, surrendering control during wait periods.
+关键见解是大多数应用时间花在等待 I/O，而不是处理。与其为每个连接分配一个线程（阻塞等待），Node.js 在单个线程上复用许多连接，在等待期间放弃控制权。
 
-## Architectural Components
+## 架构组件
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Node.js Process                              │
+│                         Node.js 进程                                │
 │  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │                          V8 Engine                              │ │
-│  │              JavaScript Code, JIT Compilation                   │ │
+│  │                          V8 引擎                                 │ │
+│  │              JavaScript 代码、JIT 编译                           │ │
 │  └─────────────────────────────────────────────────────────────────┘ │
-│                               │                                       │
-│                    ┌──────────┴──────────┐                           │
-│                    ▼                     ▼                           │
+│                               │                                      │
+│                    ┌──────────┴──────────┐                          │
+│                    ▼                     ▼                          │
 │  ┌─────────────────────────┐   ┌─────────────────────────┐          │
-│  │      Node.js Core       │   │        libuv            │          │
-│  │   (Bindings, C++ Addons)│◄──┤  (Event Loop, Thread   │          │
-│  │                         │   │   Pool, I/O Multiplexing│          │
+│  │      Node.js 核心        │   │        libuv            │          │
+│  │   (Bindings、C++ 插件)   │◄──┤  (事件循环、线程池    │          │
+│  │                         │   │   I/O 多路复用)        │          │
 │  └─────────────────────────┘   └──────────┬──────────────┘          │
-│                               │            │                         │
-│                               ▼            ▼                         │
-│                     ┌──────────────────────────────┐                 │
-│                     │   Operating System           │                 │
-│                     │  ( epoll, kqueue, IOCP )     │                 │
-│                     └──────────────────────────────┘                 │
+│                               │            │                        │
+│                               ▼            ▼                        │
+│                     ┌──────────────────────────────┐                │
+│                     │   操作系统                   │                │
+│                     │  ( epoll、kqueue、IOCP )   │                │
+│                     └──────────────────────────────┘                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Separation of Concerns:**
-- **V8** executes JavaScript, manages memory, and handles the call stack
-- **libuv** owns the event loop, abstracts OS-level I/O notifications, and manages the thread pool
-- **Node.js bindings** bridge JavaScript APIs to libuv operations
+**关注点分离：**
+- **V8** 执行 JavaScript，管理内存，处理调用栈
+- **libuv** 拥有事件循环，抽象 OS 级 I/O 通知，管理线程池
+- **Node.js bindings** 将 JavaScript API 桥接到 libuv 操作
 
-This separation allows Node.js to remain portable across platforms while maintaining a consistent JavaScript API.
+这种分离允许 Node.js 保持跨平台可移植性，同时维护一致的 JavaScript API。
 
-## The Event Loop Phases
+## 事件循环阶段
 
-The event loop is a state machine that cycles through distinct phases, each with a specific responsibility:
+事件循环是一个状态机，循环通过具有特定职责的不同阶段：
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                          Timers                              │
-│                   setTimeout, setInterval                    │
+│                          定时器                               │
+│                   setTimeout、setInterval                     │
 │                           │                                  │
 │                           ▼                                  │
 │              ┌─────────────────────────┐                     │
-│              │    Pending Callbacks    │                     │
-│              │  (I/O callbacks deferred)│                    │
+│              │    待处理回调           │                     │
+│              │  (延迟的 I/O 回调)      │                    │
 │              └────────────┬────────────┘                     │
 │                           │                                  │
 │                           ▼                                  │
 │              ┌─────────────────────────┐                     │
-│              │    Idle, Prepare        │                     │
+│              │    空闲、准备           │                     │
 │              └────────────┬────────────┘                     │
 │                           │                                  │
 │                           ▼                                  │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │                      Poll                             │    │
-│  │  (retrieve new I/O events, execute I/O callbacks)    │    │
+│  │                      轮询                             │    │
+│  │  (获取新的 I/O 事件，执行 I/O 回调)                    │    │
 │  │                                                         │    │
-│  │  If no callbacks → check if timers due → or wait     │    │
+│  │  如果没有回调 → 检查定时器 → 或等待                      │    │
 │  └─────────────────────────┬───────────────────────────┘    │
 │                            │                                 │
 │                            ▼                                 │
 │              ┌─────────────────────────┐                     │
-│              │         Check           │                     │
+│              │         检查            │                     │
 │              │     setImmediate()       │                     │
 │              └────────────┬────────────┘                     │
 │                           │                                  │
 │                           ▼                                  │
 │              ┌─────────────────────────┐                     │
-│              │    Close Callbacks      │                     │
+│              │    关闭回调             │                     │
 │              │   (socket.on('close'))  │                     │
 │              └─────────────────────────┘                     │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Phase Responsibilities
+### 阶段职责
 
-| Phase | Purpose | Design Rationale |
-|-------|---------|------------------|
-| **Timers** | Execute timer callbacks | Allows scheduling; callbacks run "at least" after delay |
-| **Pending Callbacks** | Run I/O errors/deferred callbacks | Ensures error handling without blocking the poll phase |
-| **Idle, Prepare** | Internal libuv bookkeeping | Prepares for next iteration; not directly controllable |
-| **Poll** | Process I/O events | The workhorse phase; where most async operations complete |
-| **Check** | Execute `setImmediate()` callbacks | Enables immediate execution after poll exhaustion |
-| **Close Callbacks** | Handle socket/handle close events | Clean shutdown of resources |
+| 阶段 | 目的 | 设计理由 |
+|------|------|----------|
+| **定时器** | 执行定时器回调 | 允许调度；回调"至少"在延迟后运行 |
+| **待处理回调** | 运行 I/O 错误/延迟回调 | 确保错误处理而不阻塞轮询阶段 |
+| **空闲、准备** | 内部 libuv 记账 | 为下一次迭代准备；不直接可控 |
+| **轮询** | 处理 I/O 事件 | 工作马阶段；大多数异步操作在此完成 |
+| **检查** | 执行 `setImmediate()` 回调 | 允许在轮询耗尽后立即执行 |
+| **关闭回调** | 处理 socket/handle 关闭事件 | 资源干净关闭 |
 
-### Phase Transitions
+### 阶段转换
 
 ```
-Entry → Timers → Pending → Idle → Poll
+入口 → 定时器 → 待处理 → 空闲 → 轮询
                                       │
                          ┌────────────┤
                          │            │
-                    (has callbacks)  (empty)
+                    (有回调)        (空)
                          │            │
                          ▼            ▼
-                       Poll        Check → Timers → ...
+                       轮询        检查 → 定时器 → ...
                                          │
-                                    (if no immediate)
+                                    (如果没有 immediate)
 ```
 
-**Critical Design Decision**: The Poll phase has two behaviors depending on whether callbacks exist:
-1. **Has callbacks**: Process them all (FIFO)
-2. **Empty**: Check for `setImmediate()` (goto Check) or timers (goto Timers), else **block waiting for I/O**
+**关键设计决策**：轮询阶段根据是否存在回调有两种行为：
+1. **有回调**：全部处理（FIFO）
+2. **空**：检查 `setImmediate()`（转到检查）或定时器（转到定时器），否则**阻塞等待 I/O**
 
-This blocking-with-timeout mechanism allows efficient CPU usage—when there's nothing to do, Node.js sleeps rather than busy-waits.
+这种带超时的阻塞机制允许高效 CPU 使用——当没有事情可做时，Node.js 睡眠而不是忙等待。
 
-## Queue Hierarchy and Priority Inversion
+## 队列层次结构和优先级反转
 
-The event loop must reconcile competing priorities. The architecture solves this through a strict hierarchy:
+事件循环必须协调竞争优先级。架构通过严格层次结构解决此问题：
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Execution Hierarchy                       │
+│                        执行层次结构                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │   ┌─────────────────────────────────────────────────────────┐   │
-│   │                    Current Phase                         │   │
+│   │                    当前阶段                              │   │
 │   │   ┌─────────────────────────────────────────────────┐   │   │
-│   │   │              Microtask Queue                     │   │   │
-│   │   │   (Promises, queueMicrotask, MutationObserver)  │   │   │
+│   │   │              微任务队列                           │   │   │
+│   │   │   (Promises、queueMicrotask、MutationObserver)   │   │   │
 │   │   └─────────────────────────────────────────────────┘   │   │
 │   │                         │                               │   │
 │   │                         ▼                               │   │
 │   │   ┌─────────────────────────────────────────────────┐   │   │
-│   │   │           nextTick Queue (HIGHEST)              │   │   │
-│   │   │        (process.nextTick callbacks)             │   │   │
+│   │   │           nextTick 队列（最高）                   │   │   │
+│   │   │        (process.nextTick 回调)                   │   │   │
 │   │   └─────────────────────────────────────────────────┘   │   │
 │   └─────────────────────────────────────────────────────────┘   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Execution Rule**: Between each phase transition, the **entire** microtask queue drains before proceeding. `process.nextTick()` callbacks drain **before** Promise callbacks.
+**执行规则**：在每个阶段转换之间，**整个**微任务队列在继续之前被清空。`process.nextTick()` 回调在 Promise 回调**之前**被清空。
 
-This creates a subtle but important guarantee: any `process.nextTick()` callback runs before any Promise callback, regardless of insertion order.
+这创建了一个微妙但重要的保证：任何 `process.nextTick()` 回调在任何 Promise 回调之前运行，不管插入顺序如何。
 
-## Non-Blocking I/O: The libuv Abstraction
+## 非阻塞 I/O：libuv 抽象
 
-libuv provides platform-agnostic I/O through a thread pool and OS-level event notification:
+libuv 通过线程池和 OS 级事件通知提供平台无关的 I/O：
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         libuv Architecture                        │
+│                         libuv 架构                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│   JavaScript ──► Node Bindings ──► libuv                         │
+│   JavaScript ──► Node Bindings ──► libuv                        │
 │                                           │                      │
 │                         ┌─────────────────┴─────────────────┐   │
 │                         ▼                                   ▼   │
 │              ┌────────────────────┐           ┌───────────────┐ │
-│              │  I/O Multiplexing  │           │  Thread Pool  │ │
-│              │   (event ports)    │           │  (4-1024)      │ │
+│              │  I/O 多路复用       │           │  线程池        │ │
+│              │   (事件端口)        │           │  (4-1024)      │ │
 │              ├────────────────────┤           ├───────────────┤ │
-│              │  epoll (Linux)     │           │  fs operations │ │
-│              │  kqueue (macOS)    │           │  DNS queries   │ │
-│              │  IOCP (Windows)    │           │  crypto        │ │
-│              └────────────────────┘           │  compression   │ │
+│              │  epoll (Linux)    │           │  fs 操作       │ │
+│              │  kqueue (macOS)   │           │  DNS 查询      │ │
+│              │  IOCP (Windows)   │           │  crypto        │ │
+│              └────────────────────┘           │  压缩          │ │
 │                                               └───────────────┘ │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Design Trade-off**: The thread pool handles operations that can't be expressed as file descriptor events (file I/O, DNS lookups, cryptographic operations). The pool size is configurable via `UV_THREADPOOL_SIZE` but maxes at 1024 to prevent resource exhaustion.
+**设计权衡**：线程池处理不能表示为文件描述符事件的操作（文件 I/O、DNS 查找、加密操作）。池大小可通过 `UV_THREADPOOL_SIZE` 配置，但最大为 1024 以防止资源耗尽。
 
-Operations expressible as file descriptor events (sockets, pipes) use OS-level multiplexing directly—no thread needed per connection.
+可表示为文件描述符事件的操作（socket、管道）直接使用 OS 级多路复用——每个连接不需要线程。
 
-## process.nextTick() vs setImmediate(): Architectural Intent
+## process.nextTick() vs setImmediate()：架构意图
 
-These two APIs serve distinct architectural purposes despite similar appearances:
+这两个 API 尽管外观相似，但服务不同的架构目的：
 
 ### process.nextTick()
 
-**Architectural Role**: Emergency exit valve for JavaScript
+**架构角色**：JavaScript 的紧急出口阀
 
-- Not part of the event loop proper—runs between operations
-- Executes before the event loop continues to the next phase
-- Use case: Ensuring something runs before the JavaScript engine can yield
+- 不属于事件循环本身——在操作之间运行
+- 在事件循环继续到下一阶段之前执行
+- 用例：确保在 JavaScript 引擎让步之前运行某些东西
 
 ```javascript
-// Guarantees 'bar' runs before any other async operation
+// 保证 'bar' 在任何其他异步操作之前运行
 function foo() {
   process.nextTick(() => console.log('bar'));
 }
 ```
 
-**Warning**: Infinite `process.nextTick()` recursion blocks the event loop entirely since there's no phase boundary to break the cycle.
+**警告**：无限的 `process.nextTick()` 递归完全阻塞事件循环，因为没有阶段边界来打破循环。
 
 ### setImmediate()
 
-**Architectural Role**: Scheduling after I/O completion
+**架构角色**：在 I/O 完成后调度
 
-- Part of the Check phase—runs after poll phase exhausts I/O callbacks
-- Designed for "run after current I/O batch completes"
-- Use case: Deferring work until the next event loop iteration after I/O
+- 属于检查阶段——在轮询阶段耗尽 I/O 回调之后运行
+- 专为"在当前 I/O 批次完成后运行"设计
+- 用例：延迟工作直到 I/O 之后的下一个事件循环迭代
 
 ```javascript
 fs.readFile('data.txt', () => {
-  // All I/O callbacks for this batch are processed
-  // Now we can safely schedule more work
-  setImmediate(() => console.log('runs in next iteration'));
+  // 这个批次的 所有 I/O 回调都已处理
+  // 现在我们可以安全地调度更多工作
+  setImmediate(() => console.log('在下一个迭代运行'));
 });
 ```
 
-### Comparison
+### 比较
 
-| Aspect | process.nextTick() | setImmediate() |
-|--------|-------------------|----------------|
-| Phase | After current JS operation | Check phase |
-| Latency | Immediate (next tick) | Next iteration |
-| Event loop blocking | Yes (if abused) | No (yields to event loop) |
-| I/O context | No relationship | Designed for post-I/O |
+| 方面 | process.nextTick() | setImmediate() |
+|------|-------------------|----------------|
+| 阶段 | 当前 JS 操作之后 | 检查阶段 |
+| 延迟 | 立即（下一个 tick） | 下一个迭代 |
+| 事件循环阻塞 | 是（如果滥用） | 否（让步给事件循环） |
+| I/O 上下文 | 无关系 | 专为 I/O 后设计 |
 
-## Execution Order: The Architecture in Practice
+## 执行顺序：实践中的架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Synchronous Code                              │
-│                    (current call stack)                         │
+│                    同步代码                                      │
+│                    (当前调用栈)                                  │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                 process.nextTick() callbacks                     │
-│                 (drains before anything else async)              │
+│                 process.nextTick() 回调                          │
+│                 (在任何其他异步之前清空)                          │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Promise callbacks                             │
-│                    (microtasks)                                  │
+│                    Promise 回调                                  │
+│                    (微任务)                                      │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Event Loop Phase 1...N                        │
-│                    (Timers → Poll → Check → ...)                  │
+│                    事件循环阶段 1...N                           │
+│                    (定时器 → 轮询 → 检查 → ...)                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Real-World Execution Example
+### 真实世界执行示例
 
 ```javascript
-console.log('1: sync start');
+console.log('1: 同步开始');
 
 setTimeout(() => console.log('2: timeout 0'), 0);
 setTimeout(() => console.log('3: timeout 100'), 100);
@@ -261,56 +261,56 @@ process.nextTick(() => console.log('5: nextTick'));
 
 Promise.resolve().then(() => console.log('6: promise then'));
 
-console.log('7: sync end');
+console.log('7: 同步结束');
 
-// Output:
-// 1: sync start
-// 7: sync end
-// 5: nextTick        ← nextTick before microtasks (by design)
-// 6: promise then    ← microtasks drain here
-// 2: timeout 0       ← timers phase
-// 4: immediate       ← check phase (may interleave with timers)
-// 3: timeout 100     ← later timers phase
+// 输出：
+// 1: 同步开始
+// 7: 同步结束
+// 5: nextTick        ← nextTick 在微任务之前（按设计）
+// 6: promise then    ← 微任务在此清空
+// 2: timeout 0       ← 定时器阶段
+// 4: immediate       ← 检查阶段（可能与定时器交错）
+// 3: timeout 100     ← 稍后的定时器阶段
 ```
 
-## I/O Callback Timing: Why It Matters
+## I/O 回调时机：为什么重要
 
-The relationship between I/O and scheduling reveals the architecture's intent:
+I/O 和调度之间的关系揭示了架构的意图：
 
 ```javascript
-// Case 1: Inside I/O callback
+// 案例 1：在 I/O 回调内部
 fs.readFile('/etc/passwd', () => {
   setTimeout(() => console.log('timeout'), 0);
   setImmediate(() => console.log('immediate'));
 });
-// Output: immediate ALWAYS before timeout
-// Reason: Poll phase already passed; Check phase runs before next Timers
+// 输出：immediate 总是先于 timeout
+// 原因：轮询阶段已经过去；检查阶段在下一个定时器之前运行
 
-// Case 2: Outside I/O
+// 案例 2：在 I/O 外部
 setTimeout(() => console.log('timeout'), 0);
 setImmediate(() => console.log('immediate'));
-// Output: UNPREDICTABLE
-// Reason: Depends on process startup time, timer granularity, and event loop iteration timing
+// 输出：不可预测
+// 原因：取决于进程启动时间、定时器粒度和事件循环迭代时机
 ```
 
-**Architectural Insight**: Within I/O callbacks, execution order becomes deterministic because the poll phase has already run. Outside I/O context, you race between timer scheduling and the event loop's current phase.
+**架构洞察**：在 I/O 回调内部，执行顺序变得确定性，因为轮询阶段已经运行。在 I/O 上下文外部，你在定时器调度和事件循环当前阶段之间竞速。
 
-## Architectural Patterns
+## 架构模式
 
-### 1. Non-Blocking Cooperative Multiplexing
+### 1. 非阻塞协作多路复用
 
 ```javascript
-// BAD: Blocks entire event loop
+// 不好：阻塞整个事件循环
 function processAll(items) {
   for (const item of items) {
-    cpuIntensiveWork(item); // No yielding
+    cpuIntensiveWork(item); // 不让步
   }
 }
 
-// GOOD: Yields between chunks
+// 好：在块之间让步
 async function processAll(items) {
   for (const item of items) {
-    await yieldToEventLoop(); // Allows other operations
+    await yieldToEventLoop(); // 允许其他操作
     cpuIntensiveWork(item);
   }
 }
@@ -320,10 +320,10 @@ function yieldToEventLoop() {
 }
 ```
 
-### 2. Deferred Execution with setImmediate
+### 2. 使用 setImmediate 延迟执行
 
 ```javascript
-// Process large dataset without blocking
+// 处理大数据集而不阻塞
 function processLargeArray(arr, callback) {
   let index = 0;
   
@@ -338,7 +338,7 @@ function processLargeArray(arr, callback) {
     index = end;
     
     if (index < arr.length) {
-      setImmediate(processChunk); // Schedule next chunk
+      setImmediate(processChunk); // 调度下一个块
     } else {
       callback();
     }
@@ -348,7 +348,7 @@ function processLargeArray(arr, callback) {
 }
 ```
 
-### 3. Ensuring Callbacks Run After I/O
+### 3. 确保回调在 I/O 之后运行
 
 ```javascript
 function afterIO(callback) {
@@ -360,57 +360,57 @@ function afterIO(callback) {
 // vs.
 
 function afterIO(callback) {
-  process.nextTick(callback); // WRONG: Runs before I/O completes
+  process.nextTick(callback); // 错误：在 I/O 完成之前运行
 }
 
 function afterIO(callback) {
-  setImmediate(callback); // RIGHT: Runs in next iteration
+  setImmediate(callback); // 正确：在下一个迭代运行
 }
 ```
 
-## Browser Event Loop: Architectural Comparison
+## 浏览器事件循环：架构比较
 
-Browsers implement a simplified event loop model:
+浏览器实现简化的事件循环模型：
 
 ```
 ┌────────────────────────────┐
-│         Tasks Queue        │
-│   (setTimeout, setInterval,│
-│    I/O callbacks)          │
+│         任务队列          │
+│   (setTimeout、setInterval、│
+│    I/O 回调)              │
 └──────────┬─────────────────┘
            │
-           ▼ (drain all microtasks)
+           ▼ (清空所有微任务)
 ┌────────────────────────────┐
-│       Microtasks Queue     │
-│  (Promise callbacks, etc.) │
-└────────────────────────────┘
+│       微任务队列          │
+│  (Promise 回调等)        │
+└──────────┬─────────────────┘
            │
-           ▼ (repeat)
+           ▼ (重复)
 ┌────────────────────────────┐
-│        Rendering           │
-│  (if needed, ~60fps)       │
+│        渲染               │
+│  (如果需要，约 60fps)    │
 └────────────────────────────┘
 ```
 
-**Key Differences**:
-| Aspect | Node.js | Browser |
-|--------|---------|---------|
-| Phases | 6 distinct phases | Tasks + Microtasks + Render |
-| Timers | Dedicated phase | Uses tasks queue |
-| I/O | Multiple phases | Single tasks queue |
-| Rendering | N/A | Explicit step |
+**关键差异**：
+| 方面 | Node.js | 浏览器 |
+|------|---------|--------|
+| 阶段 | 6 个不同阶段 | 任务 + 微任务 + 渲染 |
+| 定时器 | 专用阶段 | 使用任务队列 |
+| I/O | 多阶段 | 单一任务队列 |
+| 渲染 | 不适用 | 显式步骤 |
 
-Node.js's phase-based model enables finer-grained control at the cost of complexity. Browsers prioritize rendering responsiveness.
+Node.js 的基于阶段的模型以复杂性为代价实现更细粒度的控制。浏览器优先考虑渲染响应性。
 
-## Architectural Summary
+## 架构总结
 
-The Node.js event loop architecture embodies several key design decisions:
+Node.js 事件循环架构体现了几个关键设计决策：
 
-1. **Single-threaded concurrency**: One thread, many connections via event notification
-2. **Phase-based state machine**: Predictable ordering through distinct phases
-3. **Platform abstraction**: libuv hides OS differences (epoll/kqueue/IOCP)
-4. **Task priority hierarchy**: nextTick > Microtasks > Phase callbacks
-5. **Thread pool for blocking ops**: File I/O and CPU-bound work don't block the event
-6. **Blocking wait when idle**: Efficient CPU usage when nothing to do
+1. **单线程并发**：一个线程，通过事件通知处理许多连接
+2. **基于阶段的状态机**：通过不同阶段的可预测排序
+3. **平台抽象**：libuv 隐藏 OS 差异（epoll/kqueue/IOCP）
+4. **任务优先级层次**：nextTick > 微任务 > 阶段回调
+5. **阻塞操作线程池**：文件 I/O 和 CPU 密集型工作不阻塞事件
+6. **空闲时阻塞等待**：无事可做时高效使用 CPU
 
-Understanding these architectural decisions clarifies why certain async patterns behave as they do—and why the distinction between `process.nextTick()`, `setImmediate()`, and Promises matters more than it might first appear.
+理解这些架构决策阐明了为什么某些异步模式表现得如它们所做——以及为什么 `process.nextTick()`、`setImmediate()` 和 Promises 之间的区别比初看起来更重要。
